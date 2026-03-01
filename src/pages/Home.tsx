@@ -12,11 +12,26 @@ interface Account {
   imageOffsetY?: number;
 }
 
+interface AccountPreview {
+  image: string;
+  imageOffsetY: number;
+}
+
+const DEFAULT_ACCOUNT_IMAGES = [
+  images.travelVlogBg,
+  images.archive2,
+  images.archive3,
+  images.archive1,
+];
+
+const getDefaultAccountImage = (index: number) =>
+  DEFAULT_ACCOUNT_IMAGES[index % DEFAULT_ACCOUNT_IMAGES.length] || images.travelVlogBg;
+
 const initialAccounts: Account[] = [
-  { id: 'a1', name: '旅行主账号', image: images.travelVlogBg, imageOffsetY: 50 },
-  { id: 'a2', name: 'AI教程号', image: images.techReviewBg, imageOffsetY: 50 },
-  { id: 'a3', name: '知识库号', image: images.archive3, imageOffsetY: 50 },
-  { id: 'a4', name: '生活号', image: images.archive1, imageOffsetY: 50 },
+  { id: 'a1', name: '旅行主账号', image: getDefaultAccountImage(0), imageOffsetY: 50 },
+  { id: 'a2', name: 'AI教程号', image: getDefaultAccountImage(1), imageOffsetY: 50 },
+  { id: 'a3', name: '知识库号', image: getDefaultAccountImage(2), imageOffsetY: 50 },
+  { id: 'a4', name: '生活号', image: getDefaultAccountImage(3), imageOffsetY: 50 },
 ];
 
 function ImagePositioner({ image, offsetY, setOffsetY }: { image: string, offsetY: number, setOffsetY: (y: number) => void }) {
@@ -60,6 +75,7 @@ function ImagePositioner({ image, offsetY, setOffsetY }: { image: string, offset
 
 export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: string) => void, tasks: Task[], setTasks: React.Dispatch<React.SetStateAction<Task[]>> }) {
   const [accounts, setAccounts] = useState<Account[]>(initialAccounts);
+  const [accountPreviewMap, setAccountPreviewMap] = useState<Record<string, AccountPreview>>({});
   const [activeAccount, setActiveAccount] = useState('旅行主账号');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState(false);
@@ -156,11 +172,52 @@ export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: 
   };
 
   const handleEditAccountClick = (acc: Account) => {
+    const accountIndex = accounts.findIndex(a => a.id === acc.id);
     setEditingAccountId(acc.id);
     setNewAccountName(acc.name);
-    setNewAccountImage(acc.image);
+    setNewAccountImage(acc.image || getDefaultAccountImage(accountIndex >= 0 ? accountIndex : 0));
     setNewAccountImageOffsetY(acc.imageOffsetY ?? 50);
     setIsAddAccountModalOpen(true);
+  };
+
+  const handleOpenAccountEditor = (acc: Account) => {
+    setActiveAccount(acc.name);
+    handleEditAccountClick(acc);
+  };
+
+  const getDisplayAccount = (acc: Account, index: number): AccountPreview & Pick<Account, 'id' | 'name'> => {
+    const preview = accountPreviewMap[acc.id];
+    if (preview) {
+      return { ...acc, image: preview.image || getDefaultAccountImage(index), imageOffsetY: preview.imageOffsetY };
+    }
+    return { ...acc, image: acc.image || getDefaultAccountImage(index), imageOffsetY: acc.imageOffsetY ?? 50 };
+  };
+
+  const updateEditingAccountPreview = (image: string, imageOffsetY: number) => {
+    if (!editingAccountId) return;
+    setAccountPreviewMap(prev => ({
+      ...prev,
+      [editingAccountId]: { image, imageOffsetY },
+    }));
+  };
+
+  const clearAccountPreview = (accountId: string | null) => {
+    if (!accountId) return;
+    setAccountPreviewMap(prev => {
+      if (!prev[accountId]) return prev;
+      const next = { ...prev };
+      delete next[accountId];
+      return next;
+    });
+  };
+
+  const handleCloseAccountModal = () => {
+    clearAccountPreview(editingAccountId);
+    setNewAccountName('');
+    setNewAccountImage('');
+    setNewAccountImageOffsetY(50);
+    setIsAddAccountModalOpen(false);
+    setEditingAccountId(null);
   };
 
   const handleSaveAccount = () => {
@@ -169,7 +226,20 @@ export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: 
       return;
     }
     if (editingAccountId) {
-      setAccounts(accounts.map(a => a.id === editingAccountId ? { ...a, name: newAccountName.trim(), image: newAccountImage || images.travelVlogBg, imageOffsetY: newAccountImageOffsetY } : a));
+      const currentEditingAccountId = editingAccountId;
+      setAccounts(prev =>
+        prev.map((a, idx) =>
+          a.id === currentEditingAccountId
+            ? {
+                ...a,
+                name: newAccountName.trim(),
+                image: newAccountImage || a.image || getDefaultAccountImage(idx),
+                imageOffsetY: newAccountImageOffsetY,
+              }
+            : a
+        )
+      );
+      clearAccountPreview(currentEditingAccountId);
       showToast('账号修改成功');
     } else {
       if (accounts.length >= 10) {
@@ -179,7 +249,7 @@ export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: 
       const newAcc: Account = {
         id: Date.now().toString(),
         name: newAccountName.trim(),
-        image: newAccountImage || images.travelVlogBg,
+        image: newAccountImage || getDefaultAccountImage(accounts.length),
         imageOffsetY: newAccountImageOffsetY
       };
       setAccounts([...accounts, newAcc]);
@@ -277,17 +347,19 @@ export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: 
           <div className="px-5 mb-4 overflow-x-auto no-scrollbar">
             <div className="flex items-center gap-6 border-b border-gray-200 pb-1 min-w-max">
               <Reorder.Group axis="x" values={accounts} onReorder={setAccounts} className="flex items-center gap-6">
-                {accounts.map(acc => (
+                {accounts.map((acc, index) => {
+                  const displayAcc = getDisplayAccount(acc, index);
+                  return (
                   <Reorder.Item key={acc.id} value={acc}>
                     <button 
                       onClick={() => setActiveAccount(acc.name)}
                       className={`text-sm pb-2 px-1 transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeAccount === acc.name ? 'font-semibold text-slate-900 border-b-2 border-slate-900 ' : 'font-medium text-gray-500 hover:text-slate-900 '}`}
                     >
-                      <img src={acc.image} alt={acc.name} className="w-5 h-5 rounded-full object-cover shadow-sm" />
+                      <img src={displayAcc.image} alt={acc.name} className="w-5 h-5 rounded-full object-cover shadow-sm" />
                       {acc.name}
                     </button>
                   </Reorder.Item>
-                ))}
+                )})}
               </Reorder.Group>
               <button 
                 onClick={handleAddAccountClick}
@@ -299,28 +371,30 @@ export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: 
           </div>
 
           <div className="flex gap-4 overflow-x-auto px-5 pb-4 no-scrollbar snap-x snap-mandatory">
-            {accounts.map(acc => (
+            {accounts.map((acc, index) => {
+              const displayAcc = getDisplayAccount(acc, index);
+              return (
               <div 
                 key={acc.id} 
-                onClick={() => setActiveAccount(acc.name)}
+                onClick={() => handleOpenAccountEditor(acc)}
                 className={`snap-center shrink-0 w-[85vw] h-48 rounded-3xl relative overflow-hidden group shadow-lg border transition-all cursor-pointer ${activeAccount === acc.name ? 'border-primary ring-2 ring-primary/50' : 'border-gray-200 '}`}
               >
-                <div className="absolute inset-0 bg-cover bg-no-repeat transition-transform duration-500 group-hover:scale-105" style={{ backgroundImage: `url('${acc.image}')`, backgroundPosition: `center ${acc.imageOffsetY ?? 50}%`, filter: 'brightness(0.6)' }}></div>
+                <div className="absolute inset-0 bg-cover bg-no-repeat transition-transform duration-500 group-hover:scale-105" style={{ backgroundImage: `url('${displayAcc.image}')`, backgroundPosition: `center ${displayAcc.imageOffsetY}%`, filter: 'brightness(0.6)' }}></div>
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity z-20 backdrop-blur-[2px]">
                   <div className="flex flex-col items-center gap-2 text-white">
                     <Camera className="w-8 h-8" />
-                    <span className="text-xs font-medium">更新主页截图</span>
+                    <span className="text-xs font-medium">点击编辑账号与截图</span>
                   </div>
                 </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent"></div>
                 <div className="absolute top-4 left-4 flex items-center gap-2 z-10">
                   <div className="w-8 h-8 rounded-full bg-white p-0.5 shadow-sm">
-                    <img alt="Platform" className="w-full h-full rounded-full object-cover" src={acc.image} referrerPolicy="no-referrer" />
+                    <img alt="Platform" className="w-full h-full rounded-full object-cover" src={displayAcc.image} referrerPolicy="no-referrer" />
                   </div>
                   <span className="text-white font-semibold text-sm drop-shadow-md">{acc.name}</span>
                 </div>
                 <div className="absolute top-4 right-4 z-10">
-                  <button onClick={(e) => { e.stopPropagation(); handleEditAccountClick(acc); }} className="w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white hover:bg-black/60 transition-colors border border-white/20">
+                  <button onClick={(e) => { e.stopPropagation(); handleOpenAccountEditor(acc); }} className="w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white hover:bg-black/60 transition-colors border border-white/20">
                     <Edit className="w-4 h-4" />
                   </button>
                 </div>
@@ -329,12 +403,12 @@ export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: 
                     <div className="text-white text-xs opacity-80 mb-1">粉丝数</div>
                     <div className="text-white font-bold text-2xl">12.5万</div>
                   </div>
-                  <div onClick={() => showToast(`查看${acc.name}主页`)} className="bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 hover:bg-white/30 transition-colors cursor-pointer">
+                  <div onClick={(e) => { e.stopPropagation(); showToast(`查看${acc.name}主页`); }} className="bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 hover:bg-white/30 transition-colors cursor-pointer">
                     <span className="text-white text-xs font-medium">查看主页</span>
                   </div>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         </div>
 
@@ -567,7 +641,7 @@ export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: 
           <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-900 ">{editingAccountId ? '修改账号' : '添加账号'}</h3>
-              <button onClick={() => setIsAddAccountModalOpen(false)} className="text-gray-400 hover:text-gray-600 ">
+              <button onClick={handleCloseAccountModal} className="text-gray-400 hover:text-gray-600 ">
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -594,12 +668,20 @@ export default function Home({ showToast, tasks, setTasks }: { showToast: (msg: 
                       const url = URL.createObjectURL(e.target.files[0]);
                       setNewAccountImage(url);
                       setNewAccountImageOffsetY(50);
+                      updateEditingAccountPreview(url, 50);
                     }
                   }}
                   className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
                 />
                 {newAccountImage && (
-                  <ImagePositioner image={newAccountImage} offsetY={newAccountImageOffsetY} setOffsetY={setNewAccountImageOffsetY} />
+                  <ImagePositioner
+                    image={newAccountImage}
+                    offsetY={newAccountImageOffsetY}
+                    setOffsetY={(offsetY) => {
+                      setNewAccountImageOffsetY(offsetY);
+                      updateEditingAccountPreview(newAccountImage, offsetY);
+                    }}
+                  />
                 )}
               </div>
 

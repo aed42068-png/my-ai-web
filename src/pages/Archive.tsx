@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { ChevronLeft, Plus, Search, ChevronRight, Star, Camera, Music, Play, Briefcase, FileText, Palette, X } from 'lucide-react';
 import { images } from '../data/mockData';
 import { Task } from '../types';
@@ -10,14 +10,19 @@ const PRESET_COLORS = [
   '#14b8a6', '#06b6d4', '#3b82f6', '#6366f1'
 ];
 
-export default function Archive({ showToast, setActiveTab, tasks, setTasks }: { showToast: (msg: string) => void, setActiveTab: (tab: string) => void, tasks: Task[], setTasks: React.Dispatch<React.SetStateAction<Task[]>> }) {
+export default function Archive({ showToast, setActiveTab, tasks, setTasks }: { showToast: (msg: string) => void, setActiveTab: (tab: string) => void, tasks: Task[], setTasks: Dispatch<SetStateAction<Task[]>> }) {
   const today = new Date();
-  const currentYear = today.getFullYear();
-  const currentMonth = today.getMonth() + 1;
+  const initialYear = today.getFullYear();
+  const initialMonth = today.getMonth() + 1;
   const [selectedDate, setSelectedDate] = useState(today.getDate());
   const [isColorModalOpen, setIsColorModalOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [viewYear, setViewYear] = useState(initialYear);
+  const [viewMonth, setViewMonth] = useState(initialMonth);
+  const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
+  const [pickerYear, setPickerYear] = useState(initialYear);
+  const [pickerMonth, setPickerMonth] = useState(initialMonth);
   
   // Load colors from localStorage or use defaults
   const [completedColor, setCompletedColor] = useState(() => localStorage.getItem('archive_completed_color') || '#10b981');
@@ -52,18 +57,48 @@ export default function Archive({ showToast, setActiveTab, tasks, setTasks }: { 
     localStorage.setItem('archive_show_published', String(showPublished));
   }, [showCompleted, showTodo, showPublished]);
 
-  const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
-  const firstDay = new Date(currentYear, currentMonth - 1, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
+  const firstDay = new Date(viewYear, viewMonth - 1, 1).getDay();
 
   const blanks = Array.from({ length: firstDay }, (_, i) => i);
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
   const getTasksForDate = (day: number) => {
-    const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     return tasks.filter(t => t.date === dateStr);
   };
 
-  const selectedDateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(selectedDate).padStart(2, '0')}`;
+  const selectedDateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(selectedDate).padStart(2, '0')}`;
+
+  const setCalendarMonth = (year: number, month: number) => {
+    const monthDays = new Date(year, month, 0).getDate();
+    setViewYear(year);
+    setViewMonth(month);
+    setSelectedDate(prev => Math.min(prev, monthDays));
+    setSearchQuery('');
+    setIsSearchOpen(false);
+  };
+
+  const handlePrevMonth = () => {
+    const prev = new Date(viewYear, viewMonth - 2, 1);
+    setCalendarMonth(prev.getFullYear(), prev.getMonth() + 1);
+  };
+
+  const handleNextMonth = () => {
+    const next = new Date(viewYear, viewMonth, 1);
+    setCalendarMonth(next.getFullYear(), next.getMonth() + 1);
+  };
+
+  const openMonthPicker = () => {
+    setPickerYear(viewYear);
+    setPickerMonth(viewMonth);
+    setIsMonthPickerOpen(true);
+  };
+
+  const applyMonthPicker = () => {
+    setCalendarMonth(pickerYear, pickerMonth);
+    setIsMonthPickerOpen(false);
+  };
   
   const filteredTasks = tasks.filter(t => {
     if (searchQuery) {
@@ -151,10 +186,16 @@ export default function Archive({ showToast, setActiveTab, tasks, setTasks }: { 
 
         <div className="px-4 pb-2 pt-2">
           <div className="flex items-center justify-between mb-4">
-            <h1 className="text-[26px] font-bold tracking-tight text-slate-900 ">{currentYear}年 {currentMonth}月</h1>
+            <button onClick={openMonthPicker} className="text-[26px] font-bold tracking-tight text-slate-900 hover:text-primary transition-colors">
+              {viewYear}年 {viewMonth}月
+            </button>
             <div className="flex gap-4 text-primary">
-              <ChevronLeft className="w-6 h-6 cursor-pointer" />
-              <ChevronRight className="w-6 h-6 cursor-pointer" />
+              <button onClick={handlePrevMonth} className="hover:text-slate-600 transition-colors" aria-label="上个月">
+                <ChevronLeft className="w-6 h-6 cursor-pointer" />
+              </button>
+              <button onClick={handleNextMonth} className="hover:text-slate-600 transition-colors" aria-label="下个月">
+                <ChevronRight className="w-6 h-6 cursor-pointer" />
+              </button>
             </div>
           </div>
 
@@ -221,7 +262,7 @@ export default function Archive({ showToast, setActiveTab, tasks, setTasks }: { 
       <main className="flex-1 overflow-y-auto pb-24">
         <div className="px-4 py-4 bg-gray-ios sticky top-0 z-10 backdrop-blur-sm">
           <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
-            {searchQuery ? '搜索结果' : `${currentMonth}月${selectedDate}日`}
+            {searchQuery ? '搜索结果' : `${viewYear}年${viewMonth}月${selectedDate}日`}
           </h2>
         </div>
 
@@ -277,6 +318,56 @@ export default function Archive({ showToast, setActiveTab, tasks, setTasks }: { 
           )}
         </div>
       </main>
+
+      {isMonthPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-slate-900 ">选择年月</h3>
+              <button onClick={() => setIsMonthPickerOpen(false)} className="text-gray-400 hover:text-gray-600 ">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-center gap-4 mb-4">
+              <button
+                onClick={() => setPickerYear(prev => prev - 1)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center text-slate-600"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-lg font-semibold text-slate-900">{pickerYear}年</span>
+              <button
+                onClick={() => setPickerYear(prev => prev + 1)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center text-slate-600"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(month => (
+                <button
+                  key={month}
+                  onClick={() => setPickerMonth(month)}
+                  className={`py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    pickerMonth === month ? 'bg-primary text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 '
+                  }`}
+                >
+                  {month}月
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={applyMonthPicker}
+              className="w-full py-3.5 mt-5 bg-primary hover:bg-slate-800 text-white rounded-xl font-semibold shadow-lg shadow-primary/30 active:scale-[0.98] transition-all"
+            >
+              确认
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Color Settings Modal */}
       {isColorModalOpen && (
