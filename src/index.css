@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #0d6cf2;
+  --color-accent-red: #ff3b30;
+  --color-accent-green: #34c759;
+  --color-background-light: #f5f7f8;
+  --color-background-dark: #000000;
+  --color-card-dark: #1c1c1e;
+  --color-gray-ios: #F2F2F7;
+  --color-gray-ios-dark: #1C1C1E;
+  --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .ios-blur {
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .list-group-separator:last-child {
+    border-bottom: none;
+  }
+}
+
+body {
+  min-height: 100dvh;
+  background-color: #000;
+}
