@@ -1,20 +1,95 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# my-ai-web
 
-# Run and deploy your AI Studio app
+Cloudflare 全栈版内容管理应用：
 
-This contains everything you need to run your app locally.
+- 前端：Vite + React
+- 后端：Cloudflare Workers + Hono
+- 数据库：D1
+- 文件上传：浏览器直传 R2，Worker 签发 presigned URL
+- 部署：单 Worker + Static Assets
 
-View your app in AI Studio: https://ai.studio/apps/f025b80d-d301-4bd3-b4a2-c5cdc619610d
+## 文档
 
-## Run Locally
+- [docs/README.md](/Users/xiaohao-mini/Code/my-ai-web/docs/README.md)
+- [docs/cloudflare-architecture.md](/Users/xiaohao-mini/Code/my-ai-web/docs/cloudflare-architecture.md)
+- [docs/wrangler-cli-guide.md](/Users/xiaohao-mini/Code/my-ai-web/docs/wrangler-cli-guide.md)
+- [docs/setup-and-deploy-runbook.md](/Users/xiaohao-mini/Code/my-ai-web/docs/setup-and-deploy-runbook.md)
+- [AGENTS.md](/Users/xiaohao-mini/Code/my-ai-web/AGENTS.md)
 
-**Prerequisites:**  Node.js
+## 本地开发
 
+1. 安装依赖
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+```bash
+npm install
+```
+
+2. 准备本地变量
+
+```bash
+cp .dev.vars.example .dev.vars
+```
+
+3. 创建 D1 数据库和 R2 bucket，然后把真实值填到 [wrangler.jsonc](/Users/xiaohao-mini/Code/my-ai-web/wrangler.jsonc) 与 `.dev.vars`
+
+- `database_id`
+- `bucket_name`
+- `preview_bucket_name`
+- `R2_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+
+4. 应用本地 migrations
+
+```bash
+npm run db:migrate:local
+```
+
+5. 启动开发环境
+
+```bash
+npm run dev
+```
+
+## R2 CORS
+
+上传走浏览器直传 R2，bucket 需要先配置 CORS。示例配置在 [cloudflare/r2-cors.json](/Users/xiaohao-mini/Code/my-ai-web/cloudflare/r2-cors.json)。
+
+## 主要接口
+
+- `GET /api/accounts`
+- `POST /api/accounts`
+- `PATCH /api/accounts/:id`
+- `GET /api/tasks`
+- `POST /api/tasks`
+- `PATCH /api/tasks/:id`
+- `DELETE /api/tasks/:id`
+- `POST /api/tasks/:id/review`
+- `GET /api/ad-records`
+- `POST /api/ad-records`
+- `PATCH /api/ad-records/:id`
+- `DELETE /api/ad-records/:id`
+- `POST /api/uploads/sign`
+- `POST /api/uploads/complete`
+- `GET /api/assets/*`
+
+## 部署
+
+1. 先设置生产 secrets
+
+```bash
+wrangler secret put R2_ACCESS_KEY_ID
+wrangler secret put R2_SECRET_ACCESS_KEY
+```
+
+2. 部署 Worker 与静态资源
+
+```bash
+npm run deploy
+```
+
+## 目录说明
+
+- [worker/index.ts](/Users/xiaohao-mini/Code/my-ai-web/worker/index.ts)：Hono API 与 R2 直传签名逻辑
+- [migrations/0001_init.sql](/Users/xiaohao-mini/Code/my-ai-web/migrations/0001_init.sql)：D1 schema 与初始数据
+- [wrangler.jsonc](/Users/xiaohao-mini/Code/my-ai-web/wrangler.jsonc)：Workers Static Assets、D1、R2 绑定配置

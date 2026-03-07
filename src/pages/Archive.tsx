@@ -1,507 +1,443 @@
-import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
-import { ChevronLeft, Plus, Search, ChevronRight, Star, Camera, Music, Play, Briefcase, FileText, Palette, X } from 'lucide-react';
-import { images } from '../data/mockData';
-import { Task } from '../types';
-import { SwipeableTask } from '../components/SwipeableTask';
+import { useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Edit3, Palette, Plus, Search, Star, Trash2, X } from 'lucide-react';
 import { Reorder } from 'motion/react';
+import { SwipeableTask } from '../components/SwipeableTask';
+import type { Account, Task, TaskInput, TaskPatch, TaskStatus } from '../types';
 
-const PRESET_COLORS = [
-  '#ef4444', '#f97316', '#f59e0b', '#10b981', 
-  '#14b8a6', '#06b6d4', '#3b82f6', '#6366f1'
-];
+interface ArchiveProps {
+  showToast: (message: string) => void;
+  setActiveTab: (tab: 'home' | 'archive' | 'ads') => void;
+  accounts: Account[];
+  tasks: Task[];
+  onCreateTask: (input: TaskInput) => Promise<Task>;
+  onUpdateTask: (id: string, input: TaskPatch) => Promise<Task>;
+  onDeleteTask: (id: string) => Promise<void>;
+  onPersistTaskOrder: (tasks: Task[]) => Promise<void>;
+}
 
-export default function Archive({ showToast, setActiveTab, tasks, setTasks }: { showToast: (msg: string) => void, setActiveTab: (tab: string) => void, tasks: Task[], setTasks: Dispatch<SetStateAction<Task[]>> }) {
+const PRESET_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#10b981', '#14b8a6', '#06b6d4', '#3b82f6', '#6366f1'];
+const TASK_STATUSES: TaskStatus[] = ['待拍', '已拍', '已发'];
+
+const getTodayDate = () => new Date().toISOString().split('T')[0];
+
+export default function Archive({
+  showToast,
+  setActiveTab,
+  accounts,
+  tasks,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteTask,
+  onPersistTaskOrder,
+}: ArchiveProps) {
   const today = new Date();
-  const initialYear = today.getFullYear();
-  const initialMonth = today.getMonth() + 1;
+  const [viewYear, setViewYear] = useState(today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(today.getMonth() + 1);
   const [selectedDate, setSelectedDate] = useState(today.getDate());
-  const [isColorModalOpen, setIsColorModalOpen] = useState(false);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewYear, setViewYear] = useState(initialYear);
-  const [viewMonth, setViewMonth] = useState(initialMonth);
-  const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
-  const [pickerYear, setPickerYear] = useState(initialYear);
-  const [pickerMonth, setPickerMonth] = useState(initialMonth);
-  
-  // Load colors from localStorage or use defaults
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isColorModalOpen, setIsColorModalOpen] = useState(false);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [taskDraft, setTaskDraft] = useState({
+    title: '',
+    date: getTodayDate(),
+    location: '未指定',
+    status: '待拍' as TaskStatus,
+    accountId: '',
+  });
+
   const [completedColor, setCompletedColor] = useState(() => localStorage.getItem('archive_completed_color') || '#10b981');
   const [todoColor, setTodoColor] = useState(() => localStorage.getItem('archive_todo_color') || '#f59e0b');
   const [publishedColor, setPublishedColor] = useState(() => localStorage.getItem('archive_published_color') || '#3b82f6');
-
-  // Display toggles
   const [showCompleted, setShowCompleted] = useState(() => localStorage.getItem('archive_show_completed') !== 'false');
   const [showTodo, setShowTodo] = useState(() => localStorage.getItem('archive_show_todo') !== 'false');
   const [showPublished, setShowPublished] = useState(() => localStorage.getItem('archive_show_published') !== 'false');
 
-  // Edit Task State
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [newTask, setNewTask] = useState({ title: '', date: new Date().toISOString().split('T')[0], status: '待拍' as Task['status'] });
+  const accountNameById = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.name])),
+    [accounts]
+  );
 
-  useEffect(() => {
-    localStorage.setItem('archive_completed_color', completedColor);
-  }, [completedColor]);
-
-  useEffect(() => {
-    localStorage.setItem('archive_todo_color', todoColor);
-  }, [todoColor]);
-
-  useEffect(() => {
-    localStorage.setItem('archive_published_color', publishedColor);
-  }, [publishedColor]);
-
-  useEffect(() => {
-    localStorage.setItem('archive_show_completed', String(showCompleted));
-    localStorage.setItem('archive_show_todo', String(showTodo));
-    localStorage.setItem('archive_show_published', String(showPublished));
-  }, [showCompleted, showTodo, showPublished]);
-
+  const selectedDateString = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(selectedDate).padStart(2, '0')}`;
   const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
   const firstDay = new Date(viewYear, viewMonth - 1, 1).getDay();
+  const blanks = Array.from({ length: firstDay }, (_, index) => index);
+  const days = Array.from({ length: daysInMonth }, (_, index) => index + 1);
 
-  const blanks = Array.from({ length: firstDay }, (_, i) => i);
-  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const filteredTasks = useMemo(() => {
+    if (searchQuery.trim()) {
+      const lowerQuery = searchQuery.trim().toLowerCase();
+      return tasks.filter(
+        (task) =>
+          task.title.toLowerCase().includes(lowerQuery) ||
+          task.reviewData.toLowerCase().includes(lowerQuery) ||
+          (accountNameById.get(task.accountId) || '').toLowerCase().includes(lowerQuery)
+      );
+    }
+
+    return tasks.filter((task) => task.date === selectedDateString);
+  }, [accountNameById, searchQuery, selectedDateString, tasks]);
 
   const getTasksForDate = (day: number) => {
-    const dateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return tasks.filter(t => t.date === dateStr);
-  };
-
-  const selectedDateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(selectedDate).padStart(2, '0')}`;
-
-  const setCalendarMonth = (year: number, month: number) => {
-    const monthDays = new Date(year, month, 0).getDate();
-    setViewYear(year);
-    setViewMonth(month);
-    setSelectedDate(prev => Math.min(prev, monthDays));
-    setSearchQuery('');
-    setIsSearchOpen(false);
+    const dateString = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return tasks.filter((task) => task.date === dateString);
   };
 
   const handlePrevMonth = () => {
-    const prev = new Date(viewYear, viewMonth - 2, 1);
-    setCalendarMonth(prev.getFullYear(), prev.getMonth() + 1);
+    const previous = new Date(viewYear, viewMonth - 2, 1);
+    setViewYear(previous.getFullYear());
+    setViewMonth(previous.getMonth() + 1);
+    setSelectedDate(1);
   };
 
   const handleNextMonth = () => {
     const next = new Date(viewYear, viewMonth, 1);
-    setCalendarMonth(next.getFullYear(), next.getMonth() + 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth() + 1);
+    setSelectedDate(1);
   };
 
-  const openMonthPicker = () => {
-    setPickerYear(viewYear);
-    setPickerMonth(viewMonth);
-    setIsMonthPickerOpen(true);
-  };
-
-  const applyMonthPicker = () => {
-    setCalendarMonth(pickerYear, pickerMonth);
-    setIsMonthPickerOpen(false);
-  };
-  
-  const filteredTasks = tasks.filter(t => {
-    if (searchQuery) {
-      return t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-             (t.reviewData && t.reviewData.toLowerCase().includes(searchQuery.toLowerCase()));
+  const openTaskModal = (task?: Task) => {
+    if (task) {
+      setEditingTask(task);
+      setTaskDraft({
+        title: task.title,
+        date: task.date,
+        location: task.location,
+        status: task.status,
+        accountId: task.accountId,
+      });
+    } else {
+      setEditingTask(null);
+      setTaskDraft({
+        title: '',
+        date: selectedDateString,
+        location: '未指定',
+        status: '待拍',
+        accountId: accounts[0]?.id ?? '',
+      });
     }
-    return t.date === selectedDateStr;
-  });
-
-  const handleEdit = (task: Task) => {
-    setNewTask({ title: task.title, date: task.date, status: task.status });
-    setEditingId(task.id);
-    setIsModalOpen(true);
+    setIsTaskModalOpen(true);
   };
 
-  const handleDelete = (task: Task) => {
-    setTasks(prev => prev.filter(t => t.id !== task.id));
-    showToast('任务已删除');
-  };
-
-  const handleCreateTask = () => {
-    if (!newTask.title) {
+  const handleSaveTask = async () => {
+    if (!taskDraft.title.trim()) {
       showToast('请输入任务名称');
       return;
     }
-    if (editingId) {
-      setTasks(prev => prev.map(t => t.id === editingId ? { ...t, title: newTask.title, date: newTask.date, status: newTask.status } : t));
-      setEditingId(null);
-      showToast('任务修改成功');
-    } else {
-      const task: Task = {
-        id: Date.now().toString(),
-        title: newTask.title,
-        date: newTask.date || selectedDateStr,
-        location: '未指定',
-        status: newTask.status,
-      };
-      setTasks(prev => [...prev, task]);
-      showToast('任务创建成功');
+
+    if (!taskDraft.accountId) {
+      showToast('请先选择账号');
+      return;
     }
-    setIsModalOpen(false);
-    setNewTask({ title: '', date: selectedDateStr, status: '待拍' });
+
+    try {
+      if (editingTask) {
+        await onUpdateTask(editingTask.id, {
+          title: taskDraft.title.trim(),
+          date: taskDraft.date,
+          location: taskDraft.location.trim() || '未指定',
+          status: taskDraft.status,
+          accountId: taskDraft.accountId,
+        });
+        showToast('任务已更新');
+      } else {
+        await onCreateTask({
+          title: taskDraft.title.trim(),
+          date: taskDraft.date,
+          location: taskDraft.location.trim() || '未指定',
+          status: taskDraft.status,
+          accountId: taskDraft.accountId,
+        });
+        showToast('任务已创建');
+      }
+
+      setIsTaskModalOpen(false);
+      setEditingTask(null);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '保存任务失败');
+    }
   };
 
-  const handleReorder = (status: Task['status'], newOrder: Task[]) => {
-    setTasks(prev => {
-      const otherTasks = prev.filter(t => t.status !== status || (searchQuery ? false : t.date !== selectedDateStr));
-      return [...otherTasks, ...newOrder];
-    });
+  const handleDeleteTask = async (task: Task) => {
+    try {
+      await onDeleteTask(task.id);
+      showToast('任务已删除');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '删除任务失败');
+    }
+  };
+
+  const handleReorder = async (status: TaskStatus, nextTasks: Task[]) => {
+    try {
+      await onPersistTaskOrder(nextTasks.map((task, index) => ({ ...task, sortOrder: index, status })));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '保存排序失败');
+    }
+  };
+
+  const statusColor = (status: TaskStatus) => {
+    if (status === '已拍') return completedColor;
+    if (status === '待拍') return todoColor;
+    return publishedColor;
+  };
+
+  const saveColorPreferences = () => {
+    localStorage.setItem('archive_completed_color', completedColor);
+    localStorage.setItem('archive_todo_color', todoColor);
+    localStorage.setItem('archive_published_color', publishedColor);
+    localStorage.setItem('archive_show_completed', String(showCompleted));
+    localStorage.setItem('archive_show_todo', String(showTodo));
+    localStorage.setItem('archive_show_published', String(showPublished));
+    setIsColorModalOpen(false);
+    showToast('归档显示设置已保存');
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 ">
-      <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-slate-200 ">
-        <div className="flex items-center justify-between px-4 pt-12 pb-2">
-          <button onClick={() => setActiveTab('home')} className="flex items-center text-primary hover:text-slate-600 transition-colors">
-            <ChevronLeft className="w-6 h-6" />
+    <div className="flex h-full flex-col bg-gray-50">
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur-md">
+        <div className="flex items-center justify-between px-4 pb-2 pt-12">
+          <button data-testid="archive-back-home" onClick={() => setActiveTab('home')} className="flex items-center text-primary transition-colors hover:text-slate-600">
+            <ChevronLeft className="h-6 w-6" />
             <span className="ml-1 text-[17px] font-normal">返回</span>
           </button>
           <div className="flex items-center gap-4">
-            <button onClick={() => setIsColorModalOpen(true)} className="text-primary hover:text-slate-600 transition-colors">
-              <Palette className="w-6 h-6" />
+            <button data-testid="archive-open-color-settings" onClick={() => setIsColorModalOpen(true)} className="text-primary transition-colors hover:text-slate-600">
+              <Palette className="h-6 w-6" />
             </button>
-            <button onClick={() => { setEditingId(null); setNewTask({ title: '', date: selectedDateStr, status: '待拍' }); setIsModalOpen(true); }} className="text-primary hover:text-slate-600 transition-colors">
-              <Plus className="w-6 h-6" />
+            <button data-testid="archive-open-task-modal" onClick={() => openTaskModal()} className="text-primary transition-colors hover:text-slate-600">
+              <Plus className="h-6 w-6" />
             </button>
-            <button onClick={() => setIsSearchOpen(!isSearchOpen)} className={`transition-colors ${isSearchOpen ? 'text-slate-600' : 'text-primary hover:text-slate-600'}`}>
-              <Search className="w-6 h-6" />
+            <button
+              data-testid="archive-toggle-search"
+              onClick={() => setIsSearchOpen((current) => !current)}
+              className={`transition-colors ${isSearchOpen ? 'text-slate-600' : 'text-primary hover:text-slate-600'}`}
+            >
+              <Search className="h-6 w-6" />
             </button>
           </div>
         </div>
 
-        {isSearchOpen && (
-          <div className="px-4 pb-3 animate-in slide-in-from-top-2">
-            <input 
-              type="text" 
+        {isSearchOpen ? (
+          <div className="px-4 pb-3">
+            <input
+              type="text"
+              data-testid="archive-search-input"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索记录内容..." 
-              className="w-full bg-gray-100 border-none rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-primary outline-none"
-              autoFocus
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索任务、复盘或账号..."
+              className="w-full rounded-xl bg-slate-100 px-4 py-2 text-sm outline-none ring-primary transition-all focus:ring-2"
             />
           </div>
-        )}
+        ) : null}
 
-        <div className="px-4 pb-2 pt-2">
-          <div className="flex items-center justify-between mb-4">
-            <button onClick={openMonthPicker} className="text-[26px] font-bold tracking-tight text-slate-900 hover:text-primary transition-colors">
+        <div className="px-4 pb-3 pt-2">
+          <div className="mb-4 flex items-center justify-between">
+            <button className="text-[26px] font-bold tracking-tight text-slate-900">
               {viewYear}年 {viewMonth}月
             </button>
             <div className="flex gap-4 text-primary">
-              <button onClick={handlePrevMonth} className="hover:text-slate-600 transition-colors" aria-label="上个月">
-                <ChevronLeft className="w-6 h-6 cursor-pointer" />
+              <button data-testid="archive-prev-month" onClick={handlePrevMonth} className="transition-colors hover:text-slate-600" aria-label="上个月">
+                <ChevronLeft className="h-6 w-6" />
               </button>
-              <button onClick={handleNextMonth} className="hover:text-slate-600 transition-colors" aria-label="下个月">
-                <ChevronRight className="w-6 h-6 cursor-pointer" />
+              <button data-testid="archive-next-month" onClick={handleNextMonth} className="transition-colors hover:text-slate-600" aria-label="下个月">
+                <ChevronRight className="h-6 w-6" />
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-7 text-center mb-2">
-            {['日', '一', '二', '三', '四', '五', '六'].map(day => (
-              <span key={day} className="text-[11px] font-semibold text-slate-400 uppercase">{day}</span>
+          <div className="mb-2 grid grid-cols-7 text-center">
+            {['日', '一', '二', '三', '四', '五', '六'].map((day) => (
+              <span key={day} className="text-[11px] font-semibold uppercase text-slate-400">
+                {day}
+              </span>
             ))}
           </div>
 
-          <div className="grid grid-cols-7 text-center gap-y-3">
-            {blanks.map(b => (
-              <div key={`blank-${b}`} className="py-2"></div>
+          <div className="grid grid-cols-7 gap-y-3 text-center">
+            {blanks.map((blank) => (
+              <div key={`blank-${blank}`} className="py-2" />
             ))}
-            {days.map(day => {
-              const isSelected = day === selectedDate;
+
+            {days.map((day) => {
               const dayTasks = getTasksForDate(day);
-              const completedCount = dayTasks.filter(t => t.status === '已拍').length;
-              const todoCount = dayTasks.filter(t => t.status === '待拍').length;
-              const publishedCount = dayTasks.filter(t => t.status === '已发').length;
-              const hasBigHit = dayTasks.some(t => t.hitStatus === '爆款');
-              const hasSmallHit = dayTasks.some(t => t.hitStatus === '小爆款');
-              
+              const completedCount = dayTasks.filter((task) => task.status === '已拍').length;
+              const todoCount = dayTasks.filter((task) => task.status === '待拍').length;
+              const publishedCount = dayTasks.filter((task) => task.status === '已发').length;
+              const hasBigHit = dayTasks.some((task) => task.hitStatus === '爆款');
+              const hasSmallHit = dayTasks.some((task) => task.hitStatus === '小爆款');
+              const isSelected = !searchQuery && day === selectedDate;
+
               return (
-                <div key={day} onClick={() => { setSelectedDate(day); setSearchQuery(''); setIsSearchOpen(false); }} className="relative group cursor-pointer flex flex-col items-center h-14">
-                  <div className={`w-8 h-8 flex items-center justify-center rounded-full text-[19px] font-normal transition-colors ${isSelected && !searchQuery ? 'bg-primary text-white font-semibold shadow-md' : 'text-slate-900 hover:bg-slate-100 '}`}>
+                <div
+                  key={day}
+                  onClick={() => {
+                    setSelectedDate(day);
+                    setSearchQuery('');
+                    setIsSearchOpen(false);
+                  }}
+                  className="relative flex h-14 cursor-pointer flex-col items-center"
+                >
+                  <div
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-[19px] font-normal transition-colors ${
+                      isSelected ? 'bg-primary font-semibold text-white shadow-md' : 'text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
                     {day}
                   </div>
-                  <div className="flex gap-1 mt-0.5">
-                    {showCompleted && completedCount > 0 && (
-                      <div className="flex items-center text-[9px] font-medium" style={{ color: completedColor }}>
-                        <div className="w-1.5 h-1.5 rounded-full mr-0.5" style={{ backgroundColor: completedColor }}></div>
-                        {completedCount}
-                      </div>
-                    )}
-                    {showTodo && todoCount > 0 && (
-                      <div className="flex items-center text-[9px] font-medium" style={{ color: todoColor }}>
-                        <div className="w-1.5 h-1.5 rounded-full mr-0.5" style={{ backgroundColor: todoColor }}></div>
-                        {todoCount}
-                      </div>
-                    )}
-                    {showPublished && publishedCount > 0 && (
-                      <div className="flex items-center text-[9px] font-medium" style={{ color: publishedColor }}>
-                        <div className="w-1.5 h-1.5 rounded-full mr-0.5" style={{ backgroundColor: publishedColor }}></div>
-                        {publishedCount}
-                      </div>
-                    )}
+                  <div className="mt-0.5 flex gap-1">
+                    {showCompleted && completedCount > 0 ? <CountBadge color={completedColor} count={completedCount} /> : null}
+                    {showTodo && todoCount > 0 ? <CountBadge color={todoColor} count={todoCount} /> : null}
+                    {showPublished && publishedCount > 0 ? <CountBadge color={publishedColor} count={publishedCount} /> : null}
                   </div>
                   {hasBigHit ? (
-                    <Star className={`w-2.5 h-2.5 text-orange-500 absolute top-0 right-1 fill-orange-500`} />
+                    <Star className="absolute right-1 top-0 h-2.5 w-2.5 fill-orange-500 text-orange-500" />
                   ) : hasSmallHit ? (
-                    <Star className={`w-2.5 h-2.5 text-orange-400 absolute top-0 right-1 fill-orange-400`} />
+                    <Star className="absolute right-1 top-0 h-2.5 w-2.5 fill-orange-400 text-orange-400" />
                   ) : null}
                 </div>
               );
             })}
           </div>
-
-          <div className="flex justify-center mt-3 pb-1">
-            <div className="w-10 h-1 bg-slate-300 rounded-full"></div>
-          </div>
         </div>
       </header>
 
       <main className="flex-1 overflow-y-auto pb-24">
-        <div className="px-4 py-4 bg-gray-ios sticky top-0 z-10 backdrop-blur-sm">
-          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
+        <div className="sticky top-0 z-10 bg-gray-ios px-4 py-4 backdrop-blur-sm">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
             {searchQuery ? '搜索结果' : `${viewYear}年${viewMonth}月${selectedDate}日`}
           </h2>
         </div>
 
-        <div className="px-5 space-y-6">
-          {filteredTasks.length === 0 ? (
-            <div className="text-center py-10 text-gray-400">{searchQuery ? '没有找到相关记录' : '这一天没有记录'}</div>
-          ) : (
-            <>
-              {['待拍', '已拍', '已发'].map(status => {
-                const statusTasks = filteredTasks.filter(t => t.status === status);
-                if (statusTasks.length === 0) return null;
-                
-                const statusColor = status === '已拍' ? completedColor : status === '待拍' ? todoColor : publishedColor;
-                const statusLabel = status;
-                
-                return (
-                  <div key={status} className="space-y-3">
-                    <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColor }}></div>
-                      {statusLabel}
-                    </h3>
-                    <div className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 ">
-                      <Reorder.Group axis="y" values={statusTasks} onReorder={(newOrder) => handleReorder(status as Task['status'], newOrder)}>
-                        {statusTasks.map(task => (
+        <div className="space-y-6 px-5">
+          {filteredTasks.length ? (
+            TASK_STATUSES.map((status) => {
+              const items = filteredTasks.filter((task) => task.status === status);
+              if (!items.length) {
+                return null;
+              }
+
+              return (
+                <div key={status} className="space-y-3">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: statusColor(status) }} />
+                    {status}
+                  </h3>
+                  <div className="overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm">
+                    {searchQuery ? (
+                      items.map((task) => (
+                        <div key={task.id}>
+                          <TaskCard
+                            task={task}
+                            accountName={accountNameById.get(task.accountId)}
+                            color={statusColor(status)}
+                            onEdit={() => openTaskModal(task)}
+                            onDelete={() => void handleDeleteTask(task)}
+                          />
+                        </div>
+                      ))
+                    ) : (
+                      <Reorder.Group axis="y" values={items} onReorder={(nextItems) => void handleReorder(status, nextItems)}>
+                        {items.map((task) => (
                           <Reorder.Item key={task.id} value={task}>
-                            <SwipeableTask task={task} onEdit={handleEdit} onDelete={handleDelete} onClick={() => showToast(`查看详情：${task.title}`)}>
-                              <div className="p-3.5 flex items-center gap-3 w-full group hover:bg-gray-50  transition-colors cursor-pointer">
-                                <div className="w-1 h-8 rounded-full group-hover:scale-y-110 transition-transform shrink-0" style={{ backgroundColor: statusColor }}></div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <p className="text-sm font-medium text-slate-900 truncate">{task.title}</p>
-                                    {task.hitStatus === '爆款' && <Star className="w-3.5 h-3.5 text-orange-500 fill-orange-500 shrink-0" />}
-                                    {task.hitStatus === '小爆款' && <Star className="w-3.5 h-3.5 text-orange-400 fill-orange-400 shrink-0" />}
-                                  </div>
-                                  <p className="text-xs text-gray-500 mt-0.5">
-                                    {task.account && <span className="mr-1">{task.account} •</span>}
-                                    {task.date} • {task.location}
-                                  </p>
-                                </div>
-                                {task.reviewData && (
-                                  <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded shrink-0">有复盘</span>
-                                )}
-                              </div>
+                            <SwipeableTask task={task} onEdit={openTaskModal} onDelete={handleDeleteTask}>
+                              <TaskCard
+                                task={task}
+                                accountName={accountNameById.get(task.accountId)}
+                                color={statusColor(status)}
+                                onEdit={() => openTaskModal(task)}
+                                onDelete={() => void handleDeleteTask(task)}
+                                draggable
+                              />
                             </SwipeableTask>
                           </Reorder.Item>
                         ))}
                       </Reorder.Group>
-                    </div>
+                    )}
                   </div>
-                );
-              })}
-            </>
+                </div>
+              );
+            })
+          ) : (
+            <div className="py-12 text-center text-sm text-slate-400">{searchQuery ? '没有找到相关记录' : '这一天没有记录'}</div>
           )}
         </div>
       </main>
 
-      {isMonthPickerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold text-slate-900 ">选择年月</h3>
-              <button onClick={() => setIsMonthPickerOpen(false)} className="text-gray-400 hover:text-gray-600 ">
-                <X className="w-6 h-6" />
+      {isTaskModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div data-testid="archive-task-modal" className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-slate-900">{editingTask ? '修改任务' : '新建任务'}</h3>
+              <button onClick={() => setIsTaskModalOpen(false)} className="text-slate-400 transition-colors hover:text-slate-600">
+                <X className="h-6 w-6" />
               </button>
             </div>
 
-            <div className="flex items-center justify-center gap-4 mb-4">
-              <button
-                onClick={() => setPickerYear(prev => prev - 1)}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center text-slate-600"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="text-lg font-semibold text-slate-900">{pickerYear}年</span>
-              <button
-                onClick={() => setPickerYear(prev => prev + 1)}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center text-slate-600"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              {Array.from({ length: 12 }, (_, i) => i + 1).map(month => (
-                <button
-                  key={month}
-                  onClick={() => setPickerMonth(month)}
-                  className={`py-2.5 rounded-xl text-sm font-medium transition-all ${
-                    pickerMonth === month ? 'bg-primary text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 '
-                  }`}
-                >
-                  {month}月
-                </button>
-              ))}
-            </div>
-
-            <button
-              onClick={applyMonthPicker}
-              className="w-full py-3.5 mt-5 bg-primary hover:bg-slate-800 text-white rounded-xl font-semibold shadow-lg shadow-primary/30 active:scale-[0.98] transition-all"
-            >
-              确认
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Color Settings Modal */}
-      {isColorModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-slate-900 ">设置状态显示与颜色</h3>
-              <button onClick={() => setIsColorModalOpen(false)} className="text-gray-400 hover:text-gray-600 ">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            
-            <div className="space-y-6">
-              {/* 已拍 Settings */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-gray-700 ">「已拍」状态</label>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={showCompleted} onChange={() => setShowCompleted(!showCompleted)} />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                  </label>
-                </div>
-                {showCompleted && (
-                  <div className="flex flex-wrap gap-2">
-                    {PRESET_COLORS.map(color => (
-                      <button 
-                        key={color} 
-                        onClick={() => setCompletedColor(color)}
-                        className={`w-8 h-8 rounded-full border-2 transition-transform ${completedColor === color ? 'border-gray-900 scale-110' : 'border-transparent hover:scale-110'}`}
-                        style={{ backgroundColor: color }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* 待拍 Settings */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-gray-700 ">「待拍」状态</label>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={showTodo} onChange={() => setShowTodo(!showTodo)} />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                  </label>
-                </div>
-                {showTodo && (
-                  <div className="flex flex-wrap gap-2">
-                    {PRESET_COLORS.map(color => (
-                      <button 
-                        key={color} 
-                        onClick={() => setTodoColor(color)}
-                        className={`w-8 h-8 rounded-full border-2 transition-transform ${todoColor === color ? 'border-gray-900 scale-110' : 'border-transparent hover:scale-110'}`}
-                        style={{ backgroundColor: color }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* 已发 Settings */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-gray-700 ">「已发」状态</label>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={showPublished} onChange={() => setShowPublished(!showPublished)} />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                  </label>
-                </div>
-                {showPublished && (
-                  <div className="flex flex-wrap gap-2">
-                    {PRESET_COLORS.map(color => (
-                      <button 
-                        key={color} 
-                        onClick={() => setPublishedColor(color)}
-                        className={`w-8 h-8 rounded-full border-2 transition-transform ${publishedColor === color ? 'border-gray-900 scale-110' : 'border-transparent hover:scale-110'}`}
-                        style={{ backgroundColor: color }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <button 
-                onClick={() => setIsColorModalOpen(false)}
-                className="w-full py-3.5 mt-4 bg-primary hover:bg-slate-800  text-white rounded-xl font-semibold shadow-lg shadow-primary/30 active:scale-[0.98] transition-all"
-              >
-                完成
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Edit/Create Task Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-slate-900 ">{editingId ? '修改任务' : '新建任务'}</h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600 ">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">任务名称</label>
-                <input 
-                  type="text" 
-                  value={newTask.title}
-                  onChange={e => setNewTask({...newTask, title: e.target.value})}
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">任务名称</label>
+                <input
+                  type="text"
+                  data-testid="archive-task-title-input"
+                  value={taskDraft.title}
+                  onChange={(event) => setTaskDraft((prev) => ({ ...prev, title: event.target.value }))}
                   placeholder="例如：周末探店 Vlog"
-                  className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-slate-900 "
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">日期</label>
-                <input 
-                  type="date" 
-                  value={newTask.date}
-                  onChange={e => setNewTask({...newTask, date: e.target.value})}
-                  className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all text-slate-900 "
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">状态</label>
-                <div className="flex gap-3">
-                  {['待拍', '已拍', '已发'].map(status => (
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">账号</label>
+                <select
+                  data-testid="archive-task-account-select"
+                  value={taskDraft.accountId}
+                  onChange={(event) => setTaskDraft((prev) => ({ ...prev, accountId: event.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                >
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">日期</label>
+                  <input
+                    type="date"
+                    data-testid="archive-task-date-input"
+                    value={taskDraft.date}
+                    onChange={(event) => setTaskDraft((prev) => ({ ...prev, date: event.target.value }))}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">地点</label>
+                  <input
+                    type="text"
+                    data-testid="archive-task-location-input"
+                    value={taskDraft.location}
+                    onChange={(event) => setTaskDraft((prev) => ({ ...prev, location: event.target.value }))}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">状态</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {TASK_STATUSES.map((status) => (
                     <button
                       key={status}
-                      onClick={() => setNewTask({...newTask, status: status as Task['status']})}
-                      className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${newTask.status === status ? 'bg-primary text-white shadow-md shadow-primary/30' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 '}`}
+                      data-testid={`archive-task-status-${status}`}
+                      onClick={() => setTaskDraft((prev) => ({ ...prev, status }))}
+                      className={`rounded-xl py-2.5 text-sm font-medium transition-all ${
+                        taskDraft.status === status ? 'bg-primary text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
                     >
                       {status}
                     </button>
@@ -509,16 +445,166 @@ export default function Archive({ showToast, setActiveTab, tasks, setTasks }: { 
                 </div>
               </div>
 
-              <button 
-                onClick={handleCreateTask}
-                className="w-full py-3.5 mt-2 bg-primary hover:bg-slate-800  text-white rounded-xl font-semibold shadow-lg shadow-primary/30 active:scale-[0.98] transition-all"
+              <button
+                onClick={() => void handleSaveTask()}
+                data-testid="archive-task-submit"
+                className="mt-2 w-full rounded-xl bg-primary py-3.5 font-semibold text-white shadow-lg shadow-primary/30 transition-all hover:bg-blue-600 active:scale-[0.98]"
               >
-                {editingId ? '保存修改' : '创建任务'}
+                {editingTask ? '保存修改' : '创建任务'}
               </button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
+
+      {isColorModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div data-testid="archive-color-modal" className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-slate-900">设置状态显示与颜色</h3>
+              <button onClick={() => setIsColorModalOpen(false)} className="text-slate-400 transition-colors hover:text-slate-600">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <ColorSection title="已拍" testId="archive-color-toggle-completed" checked={showCompleted} onToggle={() => setShowCompleted((prev) => !prev)} value={completedColor} onSelect={setCompletedColor} />
+              <ColorSection title="待拍" testId="archive-color-toggle-todo" checked={showTodo} onToggle={() => setShowTodo((prev) => !prev)} value={todoColor} onSelect={setTodoColor} />
+              <ColorSection title="已发" testId="archive-color-toggle-published" checked={showPublished} onToggle={() => setShowPublished((prev) => !prev)} value={publishedColor} onSelect={setPublishedColor} />
+
+              <button
+                onClick={saveColorPreferences}
+                data-testid="archive-color-submit"
+                className="mt-4 w-full rounded-xl bg-primary py-3.5 font-semibold text-white shadow-lg shadow-primary/30 transition-all hover:bg-blue-600 active:scale-[0.98]"
+              >
+                完成
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CountBadge({ color, count }: { color: string; count: number }) {
+  return (
+    <div className="flex items-center text-[9px] font-medium" style={{ color }}>
+      <div className="mr-0.5 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+      {count}
+    </div>
+  );
+}
+
+function ColorSection({
+  title,
+  testId,
+  checked,
+  onToggle,
+  value,
+  onSelect,
+}: {
+  title: string;
+  testId: string;
+  checked: boolean;
+  onToggle: () => void;
+  value: string;
+  onSelect: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <label className="text-sm font-medium text-slate-700">「{title}」状态</label>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          data-testid={testId}
+          onClick={onToggle}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            checked ? 'bg-primary' : 'bg-slate-200'
+          }`}
+        >
+          <span
+            className={`absolute left-[2px] top-[2px] h-5 w-5 rounded-full border bg-white transition-transform ${
+              checked ? 'translate-x-full border-white' : 'border-slate-300'
+            }`}
+          />
+        </button>
+      </div>
+
+      {checked ? (
+        <div className="flex flex-wrap gap-2">
+          {PRESET_COLORS.map((color) => (
+            <button
+              key={color}
+              onClick={() => onSelect(color)}
+              className={`h-8 w-8 rounded-full border-2 transition-transform ${
+                value === color ? 'scale-110 border-slate-900' : 'border-transparent hover:scale-110'
+              }`}
+              style={{ backgroundColor: color }}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TaskCard({
+  task,
+  accountName,
+  color,
+  onEdit,
+  onDelete,
+  draggable = false,
+}: {
+  task: Task;
+  accountName?: string;
+  color: string;
+  onEdit: () => void;
+  onDelete: () => void;
+  draggable?: boolean;
+}) {
+  return (
+    <div data-testid="archive-task-card" className="flex w-full items-center gap-3 p-3.5 transition-colors hover:bg-slate-50">
+      {draggable ? <div className="h-4 w-4 rounded-full bg-slate-200" /> : <div className="h-4 w-4" />}
+      <div className="h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-medium text-slate-900">{task.title}</p>
+          {task.hitStatus === '爆款' ? (
+            <Star className="h-3.5 w-3.5 shrink-0 fill-orange-500 text-orange-500" />
+          ) : task.hitStatus === '小爆款' ? (
+            <Star className="h-3.5 w-3.5 shrink-0 fill-orange-400 text-orange-400" />
+          ) : null}
+        </div>
+        <p className="mt-0.5 text-xs text-slate-500">
+          {accountName ? <span className="mr-1">{accountName} ·</span> : null}
+          {task.date} · {task.location}
+        </p>
+        {task.reviewData ? (
+          <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">有复盘</span>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={onEdit}
+          data-testid="archive-task-edit"
+          aria-label={`编辑任务 ${task.title}`}
+          className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+        >
+          <Edit3 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={onDelete}
+          data-testid="archive-task-delete"
+          aria-label={`删除任务 ${task.title}`}
+          className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-rose-500"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }

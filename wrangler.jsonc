@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "my-ai-web",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-03-06",
+  "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "mam.midao.site",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "vars": {
+    "R2_ACCOUNT_ID": "532b9a755fa92604dbf7d4f9f6a5c590",
+    "R2_BUCKET_NAME": "tian",
+    "R2_PUBLIC_BASE_URL": "https://assets-tian.midao.site"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "my-ai-web",
+      "database_id": "a0708d22-0764-432a-9589-08b39ba82d88",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "tian",
+      "preview_bucket_name": "tian"
+    }
+  ]
+}

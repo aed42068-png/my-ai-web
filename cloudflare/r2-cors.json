@@ -1,0 +1,27 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "http://localhost:3000",
+          "http://localhost:3100",
+          "http://127.0.0.1:3100",
+          "https://my-ai-web.shunhaozeng.workers.dev",
+          "https://mam.midao.site"
+        ],
+        "methods": [
+          "GET",
+          "HEAD",
+          "PUT"
+        ],
+        "headers": [
+          "Content-Type"
+        ]
+      },
+      "exposeHeaders": [
+        "ETag"
+      ],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}

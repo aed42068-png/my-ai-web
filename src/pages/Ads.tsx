@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays,
   ChevronDown,
@@ -11,406 +11,348 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+import AccountEditorModal from '../components/AccountEditorModal';
 import { images } from '../data/mockData';
+import { uploadAsset } from '../lib/api';
+import { getAccountCover, getDefaultAccountImage } from '../lib/defaults';
+import type {
+  Account,
+  AccountInput,
+  AdRecord,
+  AdRecordInput,
+  AdRecordPatch,
+  AdRecordType,
+  IncomeSettlement,
+} from '../types';
 
-type RecordType = 'income' | 'expense';
-type RecordIcon = 'wallet' | 'square' | 'megaphone';
-type IncomeSettlement = 'settled' | 'unsettled';
-
-interface RevenueRecord {
-  id: number;
-  title: string;
-  date: string;
-  note: string;
-  type: RecordType;
-  amount: number;
-  icon: RecordIcon;
-  settlementStatus?: IncomeSettlement;
-}
-
-interface MonthlySummary {
-  year: number;
-  month: number;
-  income: number;
-  expense: number;
-}
-
-interface AdAccount {
-  id: string;
-  name: string;
-  coverImage: string;
-  coverOffsetY: number;
-}
-
-interface AccountDraft {
-  id: string;
-  name: string;
-  coverImage: string;
-  coverOffsetY: number;
+interface AdsProps {
+  showToast: (message: string) => void;
+  accounts: Account[];
+  records: AdRecord[];
+  isLoadingRecords?: boolean;
+  recordsErrorMessage?: string;
+  onRetryLoadRecords?: () => Promise<void>;
+  onCreateAccount: (input: AccountInput) => Promise<Account>;
+  onUpdateAccount: (id: string, input: Partial<AccountInput>) => Promise<Account>;
+  onCreateRecord: (input: AdRecordInput) => Promise<AdRecord>;
+  onUpdateRecord: (id: string, input: AdRecordPatch) => Promise<AdRecord>;
+  onDeleteRecord: (id: string) => Promise<void>;
 }
 
 const today = new Date();
 const currentYear = today.getFullYear();
 const currentMonth = today.getMonth() + 1;
+const currentDateISO = today.toISOString().split('T')[0];
 
-const defaultAccountCovers = [images.travelVlogBg, images.archive2, images.archive3, images.archive1];
-const getDefaultCover = (index: number) =>
-  defaultAccountCovers[index % defaultAccountCovers.length] || images.travelVlogBg;
+const monthLabel = (month: number) => `${month}月`;
 
-const initialAccounts: AdAccount[] = [
-  { id: 'acc-1', name: '旅行主账号', coverImage: getDefaultCover(0), coverOffsetY: 42 },
-  { id: 'acc-2', name: 'AI教程号', coverImage: getDefaultCover(1), coverOffsetY: 50 },
-  { id: 'acc-3', name: '知识库号', coverImage: getDefaultCover(2), coverOffsetY: 52 },
-  { id: 'acc-4', name: '生活号', coverImage: getDefaultCover(3), coverOffsetY: 48 },
-];
+const formatCurrency = (amount: number) =>
+  amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const formatRecordAmount = (amount: number, type: AdRecordType) =>
+  `${type === 'income' ? '+' : '-'}¥ ${amount.toLocaleString('zh-CN')}`;
 
 const formatDateLabel = (date: Date) => {
   const weekday = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
   return `${date.getMonth() + 1}月${date.getDate()}日 ${weekday[date.getDay()]}`;
 };
 
-const formatCurrency = (amount: number) =>
-  amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const formatRecordAmount = (amount: number, type: RecordType) =>
-  `${type === 'income' ? '+' : '-'}¥ ${amount.toLocaleString('zh-CN')}`;
-
-const initialMonthlySummaries: MonthlySummary[] = (() => {
-  const arr = Array.from({ length: 12 }, (_, index) => ({
-    year: currentYear,
-    month: index + 1,
-    income: 18000 + index * 1200,
-    expense: 3600 + index * 480,
-  }));
-  arr[currentMonth - 1] = {
-    ...arr[currentMonth - 1],
-    income: 42850,
-    expense: 8420,
-  };
-  return arr;
-})();
-
-const toDotDate = (isoDate: string) => isoDate.replace(/-/g, '.');
-const monthName = (month: number) => `${month}月`;
-const currentDateISO = new Date().toISOString().split('T')[0];
-
-const parseDotDateToYearMonth = (date: string) => {
-  const [yearRaw, monthRaw] = date.split('.');
-  return {
-    year: Number(yearRaw) || currentYear,
-    month: Number(monthRaw) || currentMonth,
-  };
-};
-
-const createEmptyAccountDraft = (index: number): AccountDraft => ({
-  id: '',
-  name: '',
-  coverImage: getDefaultCover(index),
-  coverOffsetY: 50,
+const createRecordDraft = (type: AdRecordType, record?: AdRecord) => ({
+  title: record?.title ?? '',
+  date: record?.date ?? currentDateISO,
+  note: record?.note ?? '',
+  type: record?.type ?? type,
+  amount: record ? String(record.amount) : '',
+  settlementStatus: record?.settlementStatus ?? ('unsettled' as IncomeSettlement),
 });
 
-function ImagePositioner({
-  image,
-  offsetY,
-  onChange,
-}: {
-  image: string;
-  offsetY: number;
-  onChange: (offsetY: number) => void;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const startY = useRef(0);
-  const startOffsetY = useRef(0);
-
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    startY.current = event.clientY;
-    startOffsetY.current = offsetY;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.buttons !== 1) return;
-    const dy = event.clientY - startY.current;
-    if (!containerRef.current) return;
-    const height = containerRef.current.clientHeight || 1;
-    const nextOffset = Math.max(0, Math.min(100, startOffsetY.current - (dy / height) * 100));
-    onChange(nextOffset);
-  };
-
-  return (
-    <div
-      ref={containerRef}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      className="relative mt-3 aspect-video w-full cursor-ns-resize overflow-hidden rounded-xl shadow-sm touch-none"
-    >
-      <div className="absolute inset-0 bg-cover bg-no-repeat" style={{ backgroundImage: `url('${image}')`, backgroundPosition: `center ${offsetY}%` }} />
-      <div className="absolute inset-0 flex items-center justify-center bg-black/25 text-xs font-medium text-white">
-        上下拖动调整封面位置
-      </div>
-    </div>
-  );
-}
-
-export default function Ads({ showToast }: { showToast: (msg: string) => void }) {
-  const [adAccounts, setAdAccounts] = useState<AdAccount[]>(initialAccounts);
-  const [selectedAccountId, setSelectedAccountId] = useState(initialAccounts[0].id);
-  const [activeType, setActiveType] = useState<RecordType>('income');
+export default function Ads({
+  showToast,
+  accounts,
+  records,
+  isLoadingRecords = false,
+  recordsErrorMessage = '',
+  onRetryLoadRecords,
+  onCreateAccount,
+  onUpdateAccount,
+  onCreateRecord,
+  onUpdateRecord,
+  onDeleteRecord,
+}: AdsProps) {
+  const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [activeType, setActiveType] = useState<AdRecordType>('income');
   const [incomeFilter, setIncomeFilter] = useState<'all' | IncomeSettlement>('all');
-
   const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
-  const [accountModalMode, setAccountModalMode] = useState<'add' | 'edit'>('edit');
+  const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+  const [editingRecord, setEditingRecord] = useState<AdRecord | null>(null);
+  const [recordDraft, setRecordDraft] = useState(() => createRecordDraft('income'));
 
-  const [selectedYear, setSelectedYear] = useState(currentYear);
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
-  const [monthlySummaries, setMonthlySummaries] = useState<MonthlySummary[]>(initialMonthlySummaries);
+  useEffect(() => {
+    if (!accounts.length) {
+      setSelectedAccountId('');
+      return;
+    }
 
-  const [records, setRecords] = useState<RevenueRecord[]>([
-    {
-      id: 1,
-      title: '品牌合作: 户外品牌',
-      date: `${currentYear}.${String(currentMonth).padStart(2, '0')}.22`,
-      note: '某品牌季度合作结算',
-      type: 'income',
-      amount: 15000,
-      icon: 'wallet',
-      settlementStatus: 'settled',
-    },
-    {
-      id: 2,
-      title: '激励计划: 视频分成',
-      date: `${currentYear}.${String(currentMonth).padStart(2, '0')}.20`,
-      note: '平台流量激励收益',
-      type: 'income',
-      amount: 2450,
-      icon: 'square',
-      settlementStatus: 'unsettled',
-    },
-    {
-      id: 3,
-      title: '作品加热: 探店Vlog',
-      date: `${currentYear}.${String(currentMonth).padStart(2, '0')}.18`,
-      note: 'Dou+ 付费加热',
-      type: 'expense',
-      amount: 500,
-      icon: 'megaphone',
-    },
-  ]);
-
-  const [newRecord, setNewRecord] = useState({
-    title: '',
-    date: currentDateISO,
-    note: '',
-    type: 'income' as RecordType,
-    amount: '',
-    settlementStatus: 'unsettled' as IncomeSettlement,
-  });
-
-  const [accountDraft, setAccountDraft] = useState<AccountDraft>(createEmptyAccountDraft(initialAccounts.length));
-
-  const currentDateLabel = useMemo(() => formatDateLabel(new Date()), []);
+    if (!accounts.some((account) => account.id === selectedAccountId)) {
+      setSelectedAccountId(accounts[0].id);
+    }
+  }, [accounts, selectedAccountId]);
 
   const selectedAccount = useMemo(
-    () => adAccounts.find(account => account.id === selectedAccountId) || adAccounts[0],
-    [adAccounts, selectedAccountId]
+    () => accounts.find((account) => account.id === selectedAccountId) ?? null,
+    [accounts, selectedAccountId]
   );
 
-  const getMonthlySummary = (year: number, month: number) =>
-    monthlySummaries.find(item => item.year === year && item.month === month) || {
-      year,
-      month,
-      income: 0,
-      expense: 0,
-    };
-
-  const selectedSummary = useMemo(
-    () => getMonthlySummary(selectedYear, selectedMonth),
-    [monthlySummaries, selectedYear, selectedMonth]
+  const accountRecords = useMemo(
+    () => records.filter((record) => record.accountId === selectedAccountId),
+    [records, selectedAccountId]
   );
+
+  const selectedSummary = useMemo(() => {
+    return accountRecords.reduce(
+      (result, record) => {
+        const [yearRaw, monthRaw] = record.date.split('-');
+        if (Number(yearRaw) !== selectedYear || Number(monthRaw) !== selectedMonth) {
+          return result;
+        }
+
+        if (record.type === 'income') {
+          result.income += record.amount;
+          if (record.settlementStatus === 'settled') {
+            result.settled += record.amount;
+          } else {
+            result.unsettled += record.amount;
+          }
+        } else {
+          result.expense += record.amount;
+        }
+
+        return result;
+      },
+      { income: 0, expense: 0, settled: 0, unsettled: 0 }
+    );
+  }, [accountRecords, selectedMonth, selectedYear]);
 
   const monthRows = useMemo(
-    () => Array.from({ length: 12 }, (_, index) => getMonthlySummary(selectedYear, index + 1)),
-    [monthlySummaries, selectedYear]
-  );
+    () =>
+      Array.from({ length: 12 }, (_, index) => {
+        const month = index + 1;
+        const summary = accountRecords.reduce(
+          (result, record) => {
+            const [yearRaw, monthRaw] = record.date.split('-');
+            if (Number(yearRaw) !== selectedYear || Number(monthRaw) !== month) {
+              return result;
+            }
 
-  const incomeSettlementSummary = useMemo(() => {
-    let settled = 0;
-    let unsettled = 0;
-    records.forEach(record => {
-      if (record.type !== 'income') return;
-      const { year, month } = parseDotDateToYearMonth(record.date);
-      if (year !== selectedYear || month !== selectedMonth) return;
-      if (record.settlementStatus === 'settled') {
-        settled += record.amount;
-      } else {
-        unsettled += record.amount;
-      }
-    });
-    return { settled, unsettled };
-  }, [records, selectedYear, selectedMonth]);
+            if (record.type === 'income') {
+              result.income += record.amount;
+            } else {
+              result.expense += record.amount;
+            }
+
+            return result;
+          },
+          { month, income: 0, expense: 0 }
+        );
+
+        return summary;
+      }),
+    [accountRecords, selectedYear]
+  );
 
   const filteredRecords = useMemo(
     () =>
-      records.filter(record => {
-        if (record.type !== activeType) return false;
-        const { year, month } = parseDotDateToYearMonth(record.date);
-        if (year !== selectedYear || month !== selectedMonth) return false;
+      accountRecords.filter((record) => {
+        const [yearRaw, monthRaw] = record.date.split('-');
+        if (Number(yearRaw) !== selectedYear || Number(monthRaw) !== selectedMonth) {
+          return false;
+        }
+
+        if (record.type !== activeType) {
+          return false;
+        }
+
         if (activeType === 'income' && incomeFilter !== 'all') {
           return record.settlementStatus === incomeFilter;
         }
+
         return true;
       }),
-    [records, activeType, incomeFilter, selectedYear, selectedMonth]
+    [accountRecords, activeType, incomeFilter, selectedMonth, selectedYear]
   );
 
-  const updateMonthlySummary = (year: number, month: number, type: RecordType, amount: number) => {
-    setMonthlySummaries(prev => {
-      const index = prev.findIndex(item => item.year === year && item.month === month);
-      if (index === -1) {
-        return [
-          ...prev,
-          {
-            year,
-            month,
-            income: type === 'income' ? amount : 0,
-            expense: type === 'expense' ? amount : 0,
-          },
-        ];
-      }
-      return prev.map((item, itemIndex) => {
-        if (itemIndex !== index) return item;
-        return {
-          ...item,
-          income: item.income + (type === 'income' ? amount : 0),
-          expense: item.expense + (type === 'expense' ? amount : 0),
-        };
-      });
-    });
+  const currentDateLabel = useMemo(() => formatDateLabel(new Date()), []);
+
+  const closeRecordModal = () => {
+    setIsRecordModalOpen(false);
+    setEditingRecord(null);
+    setRecordDraft(createRecordDraft(activeType));
   };
 
-  const openEditAccountModal = () => {
-    if (!selectedAccount) return;
-    setAccountModalMode('edit');
-    setAccountDraft({
-      id: selectedAccount.id,
-      name: selectedAccount.name,
-      coverImage: selectedAccount.coverImage,
-      coverOffsetY: selectedAccount.coverOffsetY,
-    });
-    setIsAccountModalOpen(true);
+  const openCreateRecordModal = () => {
+    setEditingRecord(null);
+    setRecordDraft(createRecordDraft(activeType));
+    setIsRecordModalOpen(true);
   };
 
-  const openAddAccountModal = () => {
-    if (adAccounts.length >= 10) {
-      showToast('最多只能添加10个账号');
-      return;
-    }
-    setAccountModalMode('add');
-    setAccountDraft(createEmptyAccountDraft(adAccounts.length));
-    setIsAccountModalOpen(true);
+  const openEditRecordModal = (record: AdRecord) => {
+    setEditingRecord(record);
+    setRecordDraft(createRecordDraft(record.type, record));
+    setIsRecordModalOpen(true);
   };
 
-  const handleSaveAccount = () => {
-    if (!accountDraft.name.trim()) {
+  const handleSaveAccount = async ({
+    name,
+    coverAssetId,
+    coverImageUrl,
+    coverOffsetY,
+    file,
+  }: {
+    name: string;
+    coverAssetId?: string | null;
+    coverImageUrl: string;
+    coverOffsetY: number;
+    file: File | null;
+  }) => {
+    if (!name.trim()) {
       showToast('请输入账号名称');
       return;
     }
 
-    if (accountModalMode === 'edit' && accountDraft.id) {
-      setAdAccounts(prev =>
-        prev.map(account =>
-          account.id === accountDraft.id
-            ? {
-                ...account,
-                name: accountDraft.name.trim(),
-                coverImage: accountDraft.coverImage,
-                coverOffsetY: accountDraft.coverOffsetY,
-              }
-            : account
-        )
-      );
-      showToast('账号已更新');
-    } else {
-      const nextId = `acc-${Date.now()}`;
-      const nextAccount: AdAccount = {
-        id: nextId,
-        name: accountDraft.name.trim(),
-        coverImage: accountDraft.coverImage,
-        coverOffsetY: accountDraft.coverOffsetY,
-      };
-      setAdAccounts(prev => [...prev, nextAccount]);
-      setSelectedAccountId(nextId);
-      showToast('账号已新增');
-    }
+    try {
+      let nextCoverAssetId = coverAssetId ?? null;
+      let nextCoverImageUrl = coverImageUrl;
 
-    setIsAccountModalOpen(false);
+      if (file) {
+        const asset = await uploadAsset(file, 'account-cover');
+        nextCoverAssetId = asset.id;
+        nextCoverImageUrl = asset.url;
+      }
+
+      if (editingAccount) {
+        await onUpdateAccount(editingAccount.id, {
+          name: name.trim(),
+          coverAssetId: nextCoverAssetId,
+          coverImageUrl: nextCoverImageUrl,
+          coverOffsetY,
+        });
+        showToast('账号已更新');
+      } else {
+        const created = await onCreateAccount({
+          name: name.trim(),
+          coverAssetId: nextCoverAssetId,
+          coverImageUrl: nextCoverImageUrl || getDefaultAccountImage(accounts.length),
+          coverOffsetY,
+          sortOrder: accounts.length,
+        });
+        setSelectedAccountId(created.id);
+        showToast('账号已新增');
+      }
+
+      setIsAccountModalOpen(false);
+      setEditingAccount(null);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '保存账号失败');
+      throw error;
+    }
   };
 
-  const handleSaveRecord = () => {
-    if (!newRecord.title.trim() || !newRecord.amount) {
+  const handleSaveRecord = async () => {
+    if (!selectedAccountId) {
+      showToast('请先创建账号');
+      return;
+    }
+
+    if (!recordDraft.title.trim() || !recordDraft.amount) {
       showToast('请填写完整记录');
       return;
     }
 
-    const amount = Number(newRecord.amount);
+    const amount = Number(recordDraft.amount);
     if (Number.isNaN(amount) || amount <= 0) {
       showToast('请输入有效金额');
       return;
     }
 
-    const recordType = newRecord.type;
-    const recordIcon: RecordIcon = recordType === 'income' ? 'wallet' : 'megaphone';
-    const [yearRaw, monthRaw] = newRecord.date.split('-');
-    const parsedYear = Number(yearRaw) || currentYear;
-    const parsedMonth = Number(monthRaw) || currentMonth;
+    try {
+      const payload = {
+        accountId: selectedAccountId,
+        title: recordDraft.title.trim(),
+        date: recordDraft.date,
+        note: recordDraft.note.trim(),
+        type: recordDraft.type,
+        amount,
+        settlementStatus: recordDraft.type === 'income' ? recordDraft.settlementStatus : null,
+      };
 
-    const nextRecord: RevenueRecord = {
-      id: Date.now(),
-      title: newRecord.title.trim(),
-      date: toDotDate(newRecord.date),
-      note: newRecord.note.trim(),
-      type: recordType,
-      amount,
-      icon: recordIcon,
-      settlementStatus: recordType === 'income' ? newRecord.settlementStatus : undefined,
-    };
+      if (editingRecord) {
+        await onUpdateRecord(editingRecord.id, payload);
+        showToast('记录已更新');
+      } else {
+        await onCreateRecord(payload);
+        showToast('记录已添加');
+      }
 
-    setRecords(prev => [nextRecord, ...prev]);
-    updateMonthlySummary(parsedYear, parsedMonth, recordType, amount);
-    setSelectedYear(parsedYear);
-    setSelectedMonth(parsedMonth);
-    setActiveType(recordType);
-
-    setNewRecord({
-      title: '',
-      date: currentDateISO,
-      note: '',
-      type: recordType,
-      amount: '',
-      settlementStatus: 'unsettled',
-    });
-    setIsRecordModalOpen(false);
-    showToast('记录已添加');
+      closeRecordModal();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : editingRecord ? '更新记录失败' : '保存记录失败');
+    }
   };
 
-  const renderRecordIcon = (record: RevenueRecord) => {
+  const handleDeleteRecord = async () => {
+    if (!editingRecord) {
+      return;
+    }
+
+    const confirmed = window.confirm(`确认删除「${editingRecord.title}」吗？`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await onDeleteRecord(editingRecord.id);
+      closeRecordModal();
+      showToast('记录已删除');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '删除记录失败');
+    }
+  };
+
+  const handleToggleSettlement = async (record: AdRecord) => {
+    if (record.type !== 'income') {
+      return;
+    }
+
+    const nextSettlement = record.settlementStatus === 'settled' ? 'unsettled' : 'settled';
+    try {
+      await onUpdateRecord(record.id, { settlementStatus: nextSettlement });
+      showToast(nextSettlement === 'settled' ? '已标记为已结算' : '已标记为未结算');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '更新结算状态失败');
+    }
+  };
+
+  const renderRecordIcon = (record: AdRecord) => {
     const baseClass = `h-5 w-5 ${record.type === 'income' ? 'text-emerald-500' : 'text-rose-400'}`;
-    if (record.icon === 'square') return <Square className={baseClass} />;
-    if (record.icon === 'megaphone') return <Megaphone className={baseClass} />;
+    if (record.title.includes('分成')) return <Square className={baseClass} />;
+    if (record.type === 'expense') return <Megaphone className={baseClass} />;
     return <Wallet className={baseClass} />;
   };
 
   return (
     <div className="relative flex h-full flex-col bg-[#f3f4f6]">
-      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 ios-blur">
-        <div className="flex items-center justify-between px-5 pt-11 pb-5">
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur-md">
+        <div className="flex items-center justify-between px-5 pb-5 pt-11">
           <div className="flex flex-col">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{currentDateLabel}</span>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">收益管理</h1>
+            <span className="text-[11px] font-medium tracking-[0.12em] text-slate-500">{currentDateLabel}</span>
+            <h1 className="mt-1 text-[28px] font-bold tracking-tight text-slate-900">收益管理</h1>
           </div>
           <button
+            data-testid="ads-open-calendar"
             onClick={() => setIsCalendarOpen(true)}
             className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-800 transition-colors hover:bg-slate-200"
           >
@@ -419,44 +361,66 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
         </div>
       </header>
 
-      <main className="flex-1 space-y-6 overflow-y-auto px-5 pb-36 pt-5">
-        <section className="rounded-[34px] bg-gradient-to-r from-[#171922] via-[#0f1421] to-[#1b1e2a] px-6 py-6 text-white shadow-lg">
-          <div className="mb-5 flex items-center justify-between">
-            <span className="text-sm font-medium text-slate-300">{selectedYear}年{selectedMonth}月收支概览</span>
-            <div className="flex items-center gap-2">
-              <div className="relative">
+      <main className="flex-1 space-y-6 overflow-y-auto px-5 pb-24 pt-5">
+        <section className="rounded-[34px] bg-gradient-to-r from-[#171922] via-[#0f1421] to-[#1b1e2a] px-5 py-5 text-white shadow-lg">
+          <div className="mb-5 flex items-start justify-between gap-3">
+            <span className="pt-1 text-[13px] font-medium text-slate-300">
+              {selectedYear}年{selectedMonth}月收支概览
+            </span>
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="relative min-w-0">
                 <select
+                  data-testid="ads-account-select"
                   value={selectedAccountId}
-                  onChange={event => setSelectedAccountId(event.target.value)}
-                  className="appearance-none bg-transparent pr-5 text-lg font-semibold text-blue-500 outline-none"
+                  onChange={(event) => setSelectedAccountId(event.target.value)}
+                  className="max-w-[140px] appearance-none truncate bg-transparent pr-5 text-base font-semibold text-blue-300 outline-none"
                 >
-                  {adAccounts.map(account => (
+                  {accounts.map((account) => (
                     <option key={account.id} value={account.id} className="text-slate-900">
                       {account.name}
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-blue-500" />
+                <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-blue-400" />
               </div>
               <button
-                onClick={openAddAccountModal}
-                className="flex h-7 w-7 items-center justify-center rounded-full border border-white/20 text-blue-400 transition-colors hover:bg-white/10"
+                onClick={() => {
+                  setEditingAccount(null);
+                  setIsAccountModalOpen(true);
+                }}
+                data-testid="ads-add-account"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/20 text-blue-300 transition-colors hover:bg-white/10"
                 title="新增账号"
               >
                 <Plus className="h-4 w-4" />
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-5">
+
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <div className="text-sm text-slate-400">总预估收入</div>
-              <div className="mt-1 text-[41px] font-bold">¥ {formatCurrency(selectedSummary.income)}</div>
-              <div className="mt-2 text-xs text-emerald-300">已结算 ¥ {incomeSettlementSummary.settled.toLocaleString('zh-CN')}</div>
-              <div className="mt-0.5 text-xs text-amber-200">未结算 ¥ {incomeSettlementSummary.unsettled.toLocaleString('zh-CN')}</div>
+              <div className="text-[13px] text-slate-400">总预估收入</div>
+              {isLoadingRecords ? (
+                <>
+                  <div className="mt-2 h-10 w-32 animate-pulse rounded-full bg-white/10" />
+                  <div className="mt-3 h-3 w-24 animate-pulse rounded-full bg-white/10" />
+                  <div className="mt-2 h-3 w-24 animate-pulse rounded-full bg-white/10" />
+                </>
+              ) : (
+                <>
+                  <div className="mt-1 text-[34px] font-bold leading-none tracking-tight">¥ {formatCurrency(selectedSummary.income)}</div>
+                  <div className="mt-3 text-[11px] text-emerald-300">已结算 ¥ {selectedSummary.settled.toLocaleString('zh-CN')}</div>
+                  <div className="mt-1 text-[11px] text-amber-200">未结算 ¥ {selectedSummary.unsettled.toLocaleString('zh-CN')}</div>
+                </>
+              )}
             </div>
             <div className="text-right">
-              <div className="text-sm text-slate-400">总投放支出</div>
-              <div className="mt-1 text-[41px] font-bold text-red-500">¥ {formatCurrency(selectedSummary.expense)}</div>
+              <div className="text-[13px] text-slate-400">总投放支出</div>
+              {isLoadingRecords ? (
+                <div className="ml-auto mt-2 h-10 w-28 animate-pulse rounded-full bg-white/10" />
+              ) : (
+                <div className="mt-1 text-[34px] font-bold leading-none tracking-tight text-rose-500">¥ {formatCurrency(selectedSummary.expense)}</div>
+              )}
             </div>
           </div>
         </section>
@@ -465,7 +429,7 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
           <div
             className="absolute inset-0 bg-cover bg-no-repeat"
             style={{
-              backgroundImage: `url('${selectedAccount?.coverImage || images.travelVlogBg}')`,
+              backgroundImage: `url('${selectedAccount ? getAccountCover(selectedAccount) : images.travelVlogBg}')`,
               backgroundPosition: `center ${selectedAccount?.coverOffsetY ?? 50}%`,
             }}
           />
@@ -473,27 +437,35 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
 
           <div className="absolute left-5 top-5 flex items-center gap-2">
             <div className="h-10 w-10 rounded-full border-2 border-white/90 bg-[#e9c8ad] p-0.5 shadow-md">
-              <img alt="账号头像" className="h-full w-full rounded-full object-cover" src={selectedAccount?.coverImage || images.avatar} />
+              <img
+                alt="账号头像"
+                className="h-full w-full rounded-full object-cover"
+                src={selectedAccount ? getAccountCover(selectedAccount) : images.avatar}
+              />
             </div>
             <div className="text-white drop-shadow-sm">
-              <span className="text-lg font-semibold">{selectedAccount?.name || '未命名账号'}</span>
+              <span className="text-base font-semibold">{selectedAccount?.name || '未命名账号'}</span>
               <span className="ml-1 text-xs opacity-80">●</span>
             </div>
           </div>
 
           <button
-            onClick={openEditAccountModal}
-            className="absolute right-5 top-5 flex items-center gap-1 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/40"
+            onClick={() => {
+              setEditingAccount(selectedAccount);
+              setIsAccountModalOpen(true);
+            }}
+            data-testid="ads-edit-account"
+            className="absolute right-5 top-5 flex items-center gap-1 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/40"
           >
             <Edit3 className="h-3.5 w-3.5" />
             编辑
           </button>
 
-          <div className="absolute bottom-6 left-6 text-white">
-            <div className="text-sm opacity-85">账号主页预览</div>
-            <div className="mt-1 text-3xl font-bold">封面截图可自定义</div>
+          <div className="absolute bottom-6 left-6 max-w-[62%] text-white">
+            <div className="text-[13px] opacity-85">账号主页预览</div>
+            <div className="mt-1 text-[24px] font-bold leading-tight tracking-tight">封面截图来自 R2 上传</div>
           </div>
-          <div className="absolute bottom-6 right-6 rounded-full border border-white/20 bg-white/20 px-5 py-2 text-base font-semibold text-white backdrop-blur-md">
+          <div className="absolute bottom-6 right-6 rounded-full border border-white/20 bg-white/20 px-4 py-1.5 text-sm font-semibold text-white backdrop-blur-md">
             活跃中
           </div>
         </section>
@@ -501,16 +473,24 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
         <section className="rounded-2xl bg-slate-200/85 p-1">
           <div className="grid grid-cols-2 gap-1">
             <button
-              onClick={() => setActiveType('income')}
-              className={`rounded-xl py-3 text-lg font-semibold transition-all ${
+              data-testid="ads-type-income"
+              onClick={() => {
+                setActiveType('income');
+                setRecordDraft((prev) => ({ ...prev, type: 'income' }));
+              }}
+              className={`rounded-xl py-2.5 text-base font-semibold transition-all ${
                 activeType === 'income' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               收入
             </button>
             <button
-              onClick={() => setActiveType('expense')}
-              className={`rounded-xl py-3 text-lg font-semibold transition-all ${
+              data-testid="ads-type-expense"
+              onClick={() => {
+                setActiveType('expense');
+                setRecordDraft((prev) => ({ ...prev, type: 'expense' }));
+              }}
+              className={`rounded-xl py-2.5 text-base font-semibold transition-all ${
                 activeType === 'expense' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
@@ -519,7 +499,7 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
           </div>
         </section>
 
-        {activeType === 'income' && (
+        {activeType === 'income' ? (
           <section className="rounded-2xl border border-slate-200 bg-white p-3">
             <div className="mb-3 text-sm font-semibold text-slate-700">收入状态</div>
             <div className="grid grid-cols-3 gap-2">
@@ -527,9 +507,10 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
                 { key: 'all', label: '全部' },
                 { key: 'settled', label: '已结算' },
                 { key: 'unsettled', label: '未结算' },
-              ].map(item => (
+              ].map((item) => (
                 <button
                   key={item.key}
+                  data-testid={`ads-filter-${item.key}`}
                   onClick={() => setIncomeFilter(item.key as 'all' | IncomeSettlement)}
                   className={`rounded-xl py-2 text-sm font-medium transition-colors ${
                     incomeFilter === item.key ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -540,77 +521,137 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
               ))}
             </div>
           </section>
-        )}
+        ) : null}
 
         <section>
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-3xl font-bold tracking-tight text-slate-900">近期记录</h2>
-            <span className="text-base font-medium text-slate-500">
-              {selectedYear}年{selectedMonth}月
-            </span>
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[26px] font-bold tracking-tight text-slate-900">近期记录</h2>
+              <p className="mt-1 text-xs text-slate-400">点记录可编辑，点结算状态可快速切换</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500">
+                {selectedYear}年{selectedMonth}月
+              </span>
+              <button
+                onClick={openCreateRecordModal}
+                data-testid="ads-open-record-modal"
+                className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary/25 transition-colors hover:bg-blue-600"
+              >
+                <Plus className="h-4 w-4" />
+                新增
+              </button>
+            </div>
           </div>
           <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-            {filteredRecords.length === 0 ? (
-              <div className="px-5 py-10 text-center text-base text-slate-400">当前筛选下暂无记录</div>
-            ) : (
+            {recordsErrorMessage ? (
+              <div className="px-5 py-10 text-center">
+                <div className="text-base font-medium text-slate-700">收益记录加载失败</div>
+                <div className="mt-2 text-sm text-slate-500">{recordsErrorMessage}</div>
+                <button
+                  onClick={() => void onRetryLoadRecords?.()}
+                  className="mt-5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600"
+                >
+                  重试
+                </button>
+              </div>
+            ) : isLoadingRecords ? (
+              <div className="space-y-4 px-4 py-4">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div key={index} className="flex items-center gap-3">
+                    <div className="h-12 w-12 animate-pulse rounded-full bg-slate-100" />
+                    <div className="min-w-0 flex-1">
+                      <div className="h-5 w-40 animate-pulse rounded-full bg-slate-100" />
+                      <div className="mt-2 h-4 w-48 animate-pulse rounded-full bg-slate-100" />
+                    </div>
+                    <div className="h-6 w-20 animate-pulse rounded-full bg-slate-100" />
+                  </div>
+                ))}
+              </div>
+            ) : filteredRecords.length ? (
               filteredRecords.map((record, index) => (
                 <div
                   key={record.id}
-                  className={`flex items-center gap-3 px-4 py-4 ${index !== filteredRecords.length - 1 ? 'border-b border-slate-100' : ''}`}
+                  data-testid="ads-record-item"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openEditRecordModal(record)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openEditRecordModal(record);
+                    }
+                  }}
+                  className={`group flex cursor-pointer items-start gap-3 px-4 py-4 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 ${
+                    index !== filteredRecords.length - 1 ? 'border-b border-slate-100' : ''
+                  }`}
                 >
                   <div
-                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${
+                    className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${
                       record.type === 'income' ? 'bg-emerald-50' : 'bg-rose-50'
                     }`}
                   >
                     {renderRecordIcon(record)}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xl font-bold text-slate-700">{record.title}</div>
-                    <div className="mt-1 flex items-center gap-1.5 text-sm text-slate-400">
+                    <div className="truncate text-[17px] font-semibold leading-snug text-slate-800">{record.title}</div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-slate-400">
                       <CalendarDays className="h-4 w-4" />
                       <span>{record.date}</span>
                       <span>•</span>
                       <span>{record.note || '无备注'}</span>
-                      {record.type === 'income' && record.settlementStatus && (
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs ${
+                    </div>
+                    {record.type === 'income' && record.settlementStatus ? (
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          data-testid="ads-record-settlement-toggle"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleToggleSettlement(record);
+                          }}
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
                             record.settlementStatus === 'settled'
-                              ? 'bg-emerald-50 text-emerald-600'
-                              : 'bg-amber-50 text-amber-600'
+                              ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                              : 'bg-amber-50 text-amber-600 hover:bg-amber-100'
                           }`}
                         >
                           {record.settlementStatus === 'settled' ? '已结算' : '未结算'}
-                        </span>
-                      )}
-                    </div>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                  <div className={`text-2xl font-bold ${record.type === 'income' ? 'text-emerald-500' : 'text-rose-400'}`}>
-                    {formatRecordAmount(record.amount, record.type)}
+                  <div className="shrink-0 pl-2 text-right">
+                    <div
+                      className={`text-[18px] font-bold leading-tight ${
+                        record.type === 'income' ? 'text-emerald-500' : 'text-rose-400'
+                      }`}
+                    >
+                      {formatRecordAmount(record.amount, record.type)}
+                    </div>
+                    <div className="mt-2 flex items-center justify-end gap-0.5 text-[11px] font-medium text-slate-400">
+                      <span>编辑</span>
+                      <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                    </div>
                   </div>
                 </div>
               ))
+            ) : (
+              <div className="px-5 py-10 text-center text-base text-slate-400">当前筛选下暂无记录</div>
             )}
           </div>
         </section>
       </main>
 
-      <button
-        onClick={() => {
-          setNewRecord(prev => ({ ...prev, type: activeType }));
-          setIsRecordModalOpen(true);
-        }}
-        className="absolute bottom-24 left-1/2 z-30 flex h-[72px] w-[72px] -translate-x-1/2 items-center justify-center rounded-full bg-primary text-white shadow-xl shadow-primary/30 transition-transform hover:scale-105 active:scale-95"
-      >
-        <Plus className="h-8 w-8" />
-      </button>
-
-      {isRecordModalOpen && (
+      {isRecordModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+          <div data-testid="ads-record-modal" className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
             <div className="mb-6 flex items-center justify-between">
-              <h3 className="text-xl font-bold text-slate-900">新增记录</h3>
-              <button onClick={() => setIsRecordModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">{editingRecord ? '编辑记录' : '新增记录'}</h3>
+                <p className="mt-1 text-sm text-slate-400">当前账号：{selectedAccount?.name || '未命名账号'}</p>
+              </div>
+              <button onClick={closeRecordModal} className="text-slate-400 transition-colors hover:text-slate-600">
                 <X className="h-6 w-6" />
               </button>
             </div>
@@ -619,55 +660,54 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">记录类型</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setNewRecord({ ...newRecord, type: 'income' })}
-                    className={`rounded-xl py-2.5 text-sm font-medium ${
-                      newRecord.type === 'income' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    收入
-                  </button>
-                  <button
-                    onClick={() => setNewRecord({ ...newRecord, type: 'expense' })}
-                    className={`rounded-xl py-2.5 text-sm font-medium ${
-                      newRecord.type === 'expense' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    投放
-                  </button>
+                  {[
+                    { value: 'income' as const, label: '收入' },
+                    { value: 'expense' as const, label: '投放' },
+                  ].map((item) => (
+                    <button
+                      key={item.value}
+                      data-testid={`ads-record-type-${item.value}`}
+                      onClick={() => setRecordDraft((prev) => ({ ...prev, type: item.value }))}
+                      className={`rounded-xl py-2.5 text-sm font-medium ${
+                        recordDraft.type === item.value ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {newRecord.type === 'income' && (
+              {recordDraft.type === 'income' ? (
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-slate-700">收入状态</label>
                   <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => setNewRecord({ ...newRecord, settlementStatus: 'settled' })}
-                      className={`rounded-xl py-2.5 text-sm font-medium ${
-                        newRecord.settlementStatus === 'settled' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      已结算
-                    </button>
-                    <button
-                      onClick={() => setNewRecord({ ...newRecord, settlementStatus: 'unsettled' })}
-                      className={`rounded-xl py-2.5 text-sm font-medium ${
-                        newRecord.settlementStatus === 'unsettled' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      未结算
-                    </button>
+                    {[
+                      { value: 'settled' as const, label: '已结算' },
+                      { value: 'unsettled' as const, label: '未结算' },
+                    ].map((item) => (
+                      <button
+                        key={item.value}
+                        data-testid={`ads-record-settlement-${item.value}`}
+                        onClick={() => setRecordDraft((prev) => ({ ...prev, settlementStatus: item.value }))}
+                        className={`rounded-xl py-2.5 text-sm font-medium ${
+                          recordDraft.settlementStatus === item.value ? 'bg-primary text-white' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              )}
+              ) : null}
 
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">标题</label>
                 <input
                   type="text"
-                  value={newRecord.title}
-                  onChange={event => setNewRecord({ ...newRecord, title: event.target.value })}
+                  data-testid="ads-record-title-input"
+                  value={recordDraft.title}
+                  onChange={(event) => setRecordDraft((prev) => ({ ...prev, title: event.target.value }))}
                   placeholder="例如：品牌合作 - 户外品牌"
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
@@ -678,8 +718,9 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
                   <label className="mb-1.5 block text-sm font-medium text-slate-700">日期</label>
                   <input
                     type="date"
-                    value={newRecord.date}
-                    onChange={event => setNewRecord({ ...newRecord, date: event.target.value })}
+                    data-testid="ads-record-date-input"
+                    value={recordDraft.date}
+                    onChange={(event) => setRecordDraft((prev) => ({ ...prev, date: event.target.value }))}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                   />
                 </div>
@@ -688,8 +729,9 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
                   <input
                     type="number"
                     min="0"
-                    value={newRecord.amount}
-                    onChange={event => setNewRecord({ ...newRecord, amount: event.target.value })}
+                    data-testid="ads-record-amount-input"
+                    value={recordDraft.amount}
+                    onChange={(event) => setRecordDraft((prev) => ({ ...prev, amount: event.target.value }))}
                     placeholder="0"
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                   />
@@ -700,100 +742,56 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">备注</label>
                 <input
                   type="text"
-                  value={newRecord.note}
-                  onChange={event => setNewRecord({ ...newRecord, note: event.target.value })}
-                  placeholder={newRecord.type === 'income' ? '例如：某品牌合作结算' : '例如：Dou+ 加热投放'}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
-                />
-                {newRecord.type === 'income' && (
-                  <p className="mt-1 text-xs text-slate-400">提示：建议写清品牌或合作项目，后续查账更方便。</p>
-                )}
-              </div>
-
-              <button
-                onClick={handleSaveRecord}
-                className="mt-2 w-full rounded-xl bg-primary py-3.5 font-semibold text-white shadow-lg shadow-primary/30 transition-all hover:bg-blue-600 active:scale-[0.98]"
-              >
-                保存记录
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isAccountModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="mb-6 flex items-center justify-between">
-              <h3 className="text-xl font-bold text-slate-900">{accountModalMode === 'edit' ? '编辑账号封面' : '新增账号'}</h3>
-              <button onClick={() => setIsAccountModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">账号名称</label>
-                <input
-                  type="text"
-                  value={accountDraft.name}
-                  onChange={event => setAccountDraft(prev => ({ ...prev, name: event.target.value }))}
-                  placeholder="例如：旅行主账号"
+                  data-testid="ads-record-note-input"
+                  value={recordDraft.note}
+                  onChange={(event) => setRecordDraft((prev) => ({ ...prev, note: event.target.value }))}
+                  placeholder={recordDraft.type === 'income' ? '例如：某品牌合作结算' : '例如：Dou+ 加热投放'}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
                 />
               </div>
 
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">封面截图</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={event => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    const url = URL.createObjectURL(file);
-                    setAccountDraft(prev => ({ ...prev, coverImage: url, coverOffsetY: 50 }));
-                  }}
-                  className="w-full text-sm text-gray-500 file:mr-3 file:rounded-full file:border-0 file:bg-primary/10 file:px-3 file:py-2 file:text-sm file:font-medium file:text-primary hover:file:bg-primary/20"
-                />
-                <ImagePositioner
-                  image={accountDraft.coverImage}
-                  offsetY={accountDraft.coverOffsetY}
-                  onChange={offsetY => setAccountDraft(prev => ({ ...prev, coverOffsetY: offsetY }))}
-                />
-              </div>
-
               <button
-                onClick={handleSaveAccount}
+                onClick={() => void handleSaveRecord()}
+                data-testid="ads-record-submit"
                 className="mt-2 w-full rounded-xl bg-primary py-3.5 font-semibold text-white shadow-lg shadow-primary/30 transition-all hover:bg-blue-600 active:scale-[0.98]"
               >
-                {accountModalMode === 'edit' ? '保存修改' : '确认添加'}
+                {editingRecord ? '保存修改' : '保存记录'}
               </button>
+
+              {editingRecord ? (
+                <button
+                  onClick={() => void handleDeleteRecord()}
+                  data-testid="ads-record-delete"
+                  className="w-full rounded-xl border border-rose-200 py-3 text-sm font-semibold text-rose-500 transition-colors hover:bg-rose-50"
+                >
+                  删除记录
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {isCalendarOpen && (
+      {isCalendarOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl">
+          <div data-testid="ads-calendar-modal" className="w-full max-w-md rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-bold text-slate-900">月度收支</h3>
-              <button onClick={() => setIsCalendarOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setIsCalendarOpen(false)} className="text-slate-400 transition-colors hover:text-slate-600">
                 <X className="h-6 w-6" />
               </button>
             </div>
 
             <div className="mb-4 flex items-center justify-center gap-3">
               <button
-                onClick={() => setSelectedYear(prev => prev - 1)}
+                onClick={() => setSelectedYear((prev) => prev - 1)}
                 className="rounded-full bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
               <span className="text-lg font-semibold text-slate-900">{selectedYear} 年</span>
               <button
-                onClick={() => setSelectedYear(prev => prev + 1)}
+                onClick={() => setSelectedYear((prev) => prev + 1)}
                 className="rounded-full bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"
               >
                 <ChevronRight className="h-4 w-4" />
@@ -807,21 +805,24 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
             </div>
 
             <div className="max-h-[55vh] space-y-1 overflow-y-auto">
-              {monthRows.map(summary => {
+              {monthRows.map((summary) => {
                 const isActive = summary.month === selectedMonth;
                 return (
                   <button
-                    key={`${summary.year}-${summary.month}`}
+                    key={summary.month}
+                    data-testid={`ads-month-row-${summary.month}`}
                     onClick={() => {
                       setSelectedMonth(summary.month);
                       setIsCalendarOpen(false);
-                      showToast(`已切换到${summary.year}年${summary.month}月`);
+                      showToast(`已切换到${selectedYear}年${summary.month}月`);
                     }}
                     className={`grid w-full grid-cols-[72px_1fr_1fr] items-center rounded-xl px-3 py-3 text-sm transition-colors ${
                       isActive ? 'bg-primary/10' : 'hover:bg-slate-50'
                     }`}
                   >
-                    <span className={`text-left font-semibold ${isActive ? 'text-primary' : 'text-slate-700'}`}>{monthName(summary.month)}</span>
+                    <span className={`text-left font-semibold ${isActive ? 'text-primary' : 'text-slate-700'}`}>
+                      {monthLabel(summary.month)}
+                    </span>
                     <span className="text-right font-semibold text-emerald-600">+¥ {summary.income.toLocaleString('zh-CN')}</span>
                     <span className="text-right font-semibold text-rose-500">-¥ {summary.expense.toLocaleString('zh-CN')}</span>
                   </button>
@@ -830,7 +831,25 @@ export default function Ads({ showToast }: { showToast: (msg: string) => void })
             </div>
           </div>
         </div>
-      )}
+      ) : null}
+
+      <AccountEditorModal
+        open={isAccountModalOpen}
+        title={editingAccount ? '编辑账号封面' : '新增账号'}
+        submitLabel={editingAccount ? '保存修改' : '确认添加'}
+        initialDraft={{
+          name: editingAccount?.name ?? '',
+          coverAssetId: editingAccount?.coverAssetId ?? null,
+          coverImageUrl: editingAccount?.coverImageUrl ?? getDefaultAccountImage(accounts.length),
+          coverOffsetY: editingAccount?.coverOffsetY ?? 50,
+        }}
+        fallbackImage={getDefaultAccountImage(editingAccount ? accounts.findIndex((account) => account.id === editingAccount.id) : accounts.length)}
+        onClose={() => {
+          setIsAccountModalOpen(false);
+          setEditingAccount(null);
+        }}
+        onSave={handleSaveAccount}
+      />
     </div>
   );
 }
