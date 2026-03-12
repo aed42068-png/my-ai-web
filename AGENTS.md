@@ -15,9 +15,10 @@
 Before making non-trivial changes, read:
 
 1. [README.md](/Users/xiaohao-mini/Code/my-ai-web/README.md)
-2. [docs/cloudflare-architecture.md](/Users/xiaohao-mini/Code/my-ai-web/docs/cloudflare-architecture.md)
-3. [docs/setup-and-deploy-runbook.md](/Users/xiaohao-mini/Code/my-ai-web/docs/setup-and-deploy-runbook.md)
-4. [docs/e2e-behavior-test-plan.md](/Users/xiaohao-mini/Code/my-ai-web/docs/e2e-behavior-test-plan.md)
+2. [docs/current-product-status.md](/Users/xiaohao-mini/Code/my-ai-web/docs/current-product-status.md)
+3. [docs/cloudflare-architecture.md](/Users/xiaohao-mini/Code/my-ai-web/docs/cloudflare-architecture.md)
+4. [docs/setup-and-deploy-runbook.md](/Users/xiaohao-mini/Code/my-ai-web/docs/setup-and-deploy-runbook.md)
+5. [docs/e2e-behavior-test-plan.md](/Users/xiaohao-mini/Code/my-ai-web/docs/e2e-behavior-test-plan.md)
 
 ## Current Architecture
 
@@ -33,27 +34,56 @@ Key runtime model:
 - `ad_records` are lazy-loaded when entering the Ads tab
 - bootstrap cache uses `localStorage` with TTL and silent refresh
 - image uploads go `Browser -> Worker sign -> direct PUT to R2 -> Worker complete -> D1`
+- page guides persist dismissal state in `localStorage`
+
+## Current Delivery State
+
+As of `2026-03-12`:
+
+- production domain is live at `https://mam.midao.site`
+- current product is already API-driven and no longer a front-end-only prototype
+- local E2E coverage currently passes with `8 passed`
+- a non-destructive production smoke pass has already been run manually
+- Home/Archive/Ads all have onboarding guides, explicit sort entry points, and mobile spacing refinements
 
 ## Product Areas
 
 ### Home
 
 - account switching
+- horizontal account swipe stays synced with active account content
+- top account tab clicks and lower card carousel scrolling stay locked together during init and data refresh; do not reintroduce delayed scroll effects that can override an explicit selection
+- account overview sheet for explicit account selection and ordering
+- account overview selection is draft-only until submit; do not reintroduce immediate page mutation on item click
 - account creation and editing
+- home account cards use an inset preview treatment so uploaded covers do not feel overly zoomed
+- mobile header/footer have already been compressed to preserve first-screen space
+- dismissible usage guide with localStorage persistence
 - task create/edit/delete
+- task status advances via dedicated progress dot
+- explicit task sort mode with drag reorder
 - task status flow
 - task review save
 
 ### Archive
 
 - date-based task view
+- dismissible usage guide with localStorage persistence
+- search supports explicit submit via Enter or confirm button
 - search
 - task create/edit/delete
+- explicit task sort mode for same-status tasks
 - display settings persisted in `localStorage`
+- archive layout uses a single main scroll region; do not move the full calendar back into a permanently fixed area
 
 ### Ads
 
 - account-based income/expense view
+- dismissible usage guide with localStorage persistence
+- empty-state onboarding for first-time setup
+- top hero uses current account screenshot as the main background
+- income is styled with yellow/gold accents, expense with red accents
+- records are lazy-loaded only after entering the Ads tab
 - month switching
 - income settlement filtering
 - ad record create/edit/delete
@@ -65,6 +95,10 @@ Key runtime model:
 - [src/pages/Home.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/pages/Home.tsx): home workflows
 - [src/pages/Archive.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/pages/Archive.tsx): archive workflows
 - [src/pages/Ads.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/pages/Ads.tsx): ads workflows
+- [src/components/AccountOverviewSheet.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/components/AccountOverviewSheet.tsx): explicit account selection + ordering draft sheet
+- [src/components/PageGuide.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/components/PageGuide.tsx): reusable dismissible usage guide
+- [src/components/AccountEditorModal.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/components/AccountEditorModal.tsx): account editing, upload preview, cover confirmation
+- [src/components/ImagePositioner.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/components/ImagePositioner.tsx): cover positioning drag + slider fallback
 - [src/lib/api.ts](/Users/xiaohao-mini/Code/my-ai-web/src/lib/api.ts): frontend API client and upload helpers
 - [src/types.ts](/Users/xiaohao-mini/Code/my-ai-web/src/types.ts): shared types across UI and Worker
 - [worker/index.ts](/Users/xiaohao-mini/Code/my-ai-web/worker/index.ts): Hono API and upload signing
@@ -148,6 +182,12 @@ For UI or API changes:
 1. Run `npm run lint`
 2. Run `npm run e2e`
 
+For production deploys or release fixes:
+
+1. Run `npm run deploy`
+2. Verify `https://mam.midao.site/api/health`
+3. Prefer a non-destructive online smoke pass over real production writes
+
 For upload, routing, or Worker config changes:
 
 1. Run `npm run build`
@@ -167,6 +207,7 @@ For upload, routing, or Worker config changes:
 - Local Cloudflare runtime currently falls back from compatibility date `2026-03-06` to `2026-03-01`
 - This is a local tooling mismatch, not a production outage
 - If changes depend on very new Workers behavior, verify with updated Wrangler/runtime or production smoke tests
+- Production smoke has been run manually in a non-destructive way; there is not yet a standalone scripted production smoke suite
 
 ## When Docs Must Be Updated
 

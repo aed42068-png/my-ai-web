@@ -205,22 +205,38 @@ flowchart LR
 
 - [src/pages/Home.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/pages/Home.tsx)
   - 账号切换
+  - 账号一览抽屉与账号顺序保存
   - 任务创建、编辑、删除
-  - 状态分组
-  - 任务排序
+  - 状态分组与状态推进圆点
+  - 显式任务排序模式
   - 复盘保存
   - 账号封面上传
+  - 首页账号卡内嵌封面预览
 - [src/pages/Archive.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/pages/Archive.tsx)
   - 日历视图
-  - 搜索
+  - 搜索与显式提交
+  - 单滚动归档布局
+  - 显式任务排序模式
   - 状态筛选展示
   - 归档页任务编辑和删除
 - [src/pages/Ads.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/pages/Ads.tsx)
   - 账号维度收入/投放查看
+  - 顶部 hero 使用账号截图作为背景
   - 月度筛选
   - 流水记录新增、编辑、删除
   - 收入结算状态快速切换
   - 账号封面上传
+
+### 6.3 当前产品层行为约束
+
+为了避免 UI 和交互反复回退，当前仓库已经固定了几条行为约束：
+
+- `ad_records` 按需懒加载，只在进入 `Ads` tab 后请求
+- 页面级使用指引统一由 `PageGuide` 组件承载，并把关闭状态写入 `localStorage`
+- 任务排序必须通过显式“排序模式”进入，避免默认拖拽和左滑删除冲突
+- `AccountOverviewSheet` 里的账号切换是抽屉内草稿态，点击完成才正式提交到底层页面
+- 首页账号大卡采用“氛围背景 + 内层预览”的结构，尽量贴近上传弹窗里的封面预览比例
+- 顶部和底部导航已经针对移动端做过压缩，后续改动不要随意把安全区 padding 再拉大
 
 ## 7. 安全与配置边界
 

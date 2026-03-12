@@ -11,6 +11,7 @@ Cloudflare 全栈版内容管理应用：
 ## 文档
 
 - [docs/README.md](/Users/xiaohao-mini/Code/my-ai-web/docs/README.md)
+- [docs/current-product-status.md](/Users/xiaohao-mini/Code/my-ai-web/docs/current-product-status.md)
 - [docs/cloudflare-architecture.md](/Users/xiaohao-mini/Code/my-ai-web/docs/cloudflare-architecture.md)
 - [docs/wrangler-cli-guide.md](/Users/xiaohao-mini/Code/my-ai-web/docs/wrangler-cli-guide.md)
 - [docs/setup-and-deploy-runbook.md](/Users/xiaohao-mini/Code/my-ai-web/docs/setup-and-deploy-runbook.md)

@@ -52,3 +52,68 @@ test('archive flow: search, create task, edit task, delete task, persist display
   await expectToast(page, '任务已删除');
   await expect(page.getByText(editedTaskName)).toHaveCount(0);
 });
+
+test('archive flow: explicit sort mode reorders same-status tasks and persists after reload', async ({ page }) => {
+  const firstTaskName = uniqueName('归档排序A');
+  const secondTaskName = uniqueName('归档排序B');
+
+  await gotoHome(page);
+  await page.getByTestId('tab-archive').click();
+  await expect(page.getByRole('button', { name: '返回' })).toBeVisible();
+
+  await page.getByTestId('archive-open-task-modal').click();
+  await page.getByTestId('archive-task-title-input').fill(firstTaskName);
+  await page.getByTestId('archive-task-location-input').fill('归档排序区');
+  await page.getByTestId('archive-task-submit').click();
+  await expectToast(page, '任务已创建');
+
+  await page.getByTestId('archive-open-task-modal').click();
+  await page.getByTestId('archive-task-title-input').fill(secondTaskName);
+  await page.getByTestId('archive-task-location-input').fill('归档排序区');
+  await page.getByTestId('archive-task-submit').click();
+  await expectToast(page, '任务已创建');
+
+  await page.getByTestId('archive-task-sort-toggle').click();
+  await expect(page.getByTestId('archive-task-sort-mode')).toBeVisible();
+
+  const rows = page.getByTestId('archive-sort-task-row');
+  const orderBefore = await rows.allTextContents();
+  expect(orderBefore.findIndex((text) => text.includes(firstTaskName))).toBeLessThan(
+    orderBefore.findIndex((text) => text.includes(secondTaskName))
+  );
+
+  const source = rows.filter({ hasText: secondTaskName }).first();
+  const target = rows.filter({ hasText: firstTaskName }).first();
+  await source.scrollIntoViewIfNeeded();
+  await target.scrollIntoViewIfNeeded();
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+
+  if (!sourceBox || !targetBox) {
+    throw new Error('Unable to resolve archive sort row positions');
+  }
+
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y - sourceBox.height / 2, { steps: 16 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+
+  const orderAfter = await rows.allTextContents();
+  expect(orderAfter.findIndex((text) => text.includes(secondTaskName))).toBeLessThan(
+    orderAfter.findIndex((text) => text.includes(firstTaskName))
+  );
+
+  await page.getByTestId('archive-task-sort-toggle').click();
+  await expect(page.getByTestId('archive-task-sort-mode')).toHaveCount(0);
+
+  await page.reload();
+  await page.getByTestId('tab-archive').click();
+  await page.getByTestId('archive-task-sort-toggle').click();
+  await expect(page.getByTestId('archive-task-sort-mode')).toBeVisible();
+
+  const orderAfterReload = await page.getByTestId('archive-sort-task-row').allTextContents();
+  expect(orderAfterReload.findIndex((text) => text.includes(secondTaskName))).toBeLessThan(
+    orderAfterReload.findIndex((text) => text.includes(firstTaskName))
+  );
+});

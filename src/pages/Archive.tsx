@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Edit3, Palette, Plus, Search, Star, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { ChevronLeft, ChevronRight, Edit3, GripVertical, Palette, Plus, Search, Star, Trash2, X } from 'lucide-react';
 import { Reorder } from 'motion/react';
+import PageGuide from '../components/PageGuide';
 import { SwipeableTask } from '../components/SwipeableTask';
 import type { Account, Task, TaskInput, TaskPatch, TaskStatus } from '../types';
 
@@ -17,6 +18,10 @@ interface ArchiveProps {
 
 const PRESET_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#10b981', '#14b8a6', '#06b6d4', '#3b82f6', '#6366f1'];
 const TASK_STATUSES: TaskStatus[] = ['待拍', '已拍', '已发'];
+const ARCHIVE_GUIDE_STORAGE_KEY = 'my-ai-web:guide:archive:v1';
+const TASK_FIELD_CLASS =
+  'h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary';
+const TASK_STATUS_BUTTON_BASE_CLASS = 'h-11 rounded-xl text-sm font-medium transition-all';
 
 const getTodayDate = () => new Date().toISOString().split('T')[0];
 
@@ -39,6 +44,8 @@ export default function Archive({
   const [isColorModalOpen, setIsColorModalOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [isTaskSortMode, setIsTaskSortMode] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [taskDraft, setTaskDraft] = useState({
     title: '',
     date: getTodayDate(),
@@ -53,6 +60,12 @@ export default function Archive({
   const [showCompleted, setShowCompleted] = useState(() => localStorage.getItem('archive_show_completed') !== 'false');
   const [showTodo, setShowTodo] = useState(() => localStorage.getItem('archive_show_todo') !== 'false');
   const [showPublished, setShowPublished] = useState(() => localStorage.getItem('archive_show_published') !== 'false');
+
+  useEffect(() => {
+    if (searchQuery.trim() && isTaskSortMode) {
+      setIsTaskSortMode(false);
+    }
+  }, [isTaskSortMode, searchQuery]);
 
   const accountNameById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account.name])),
@@ -194,47 +207,78 @@ export default function Archive({
     showToast('归档显示设置已保存');
   };
 
+  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSearchQuery((current) => current.trim());
+    searchInputRef.current?.blur();
+  };
+
   return (
     <div className="flex h-full flex-col bg-gray-50">
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur-md">
-        <div className="flex items-center justify-between px-4 pb-2 pt-12">
+        <div className="flex items-center justify-between px-4 pb-2.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)]">
           <button data-testid="archive-back-home" onClick={() => setActiveTab('home')} className="flex items-center text-primary transition-colors hover:text-slate-600">
-            <ChevronLeft className="h-6 w-6" />
-            <span className="ml-1 text-[17px] font-normal">返回</span>
+            <ChevronLeft className="h-5 w-5" />
+            <span className="ml-1 text-[15px] font-normal">返回</span>
           </button>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <button data-testid="archive-open-color-settings" onClick={() => setIsColorModalOpen(true)} className="text-primary transition-colors hover:text-slate-600">
-              <Palette className="h-6 w-6" />
+              <Palette className="h-5 w-5" />
             </button>
             <button data-testid="archive-open-task-modal" onClick={() => openTaskModal()} className="text-primary transition-colors hover:text-slate-600">
-              <Plus className="h-6 w-6" />
+              <Plus className="h-5 w-5" />
             </button>
             <button
               data-testid="archive-toggle-search"
               onClick={() => setIsSearchOpen((current) => !current)}
               className={`transition-colors ${isSearchOpen ? 'text-slate-600' : 'text-primary hover:text-slate-600'}`}
             >
-              <Search className="h-6 w-6" />
+              <Search className="h-5 w-5" />
             </button>
           </div>
         </div>
 
         {isSearchOpen ? (
           <div className="px-4 pb-3">
-            <input
-              type="text"
-              data-testid="archive-search-input"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="搜索任务、复盘或账号..."
-              className="w-full rounded-xl bg-slate-100 px-4 py-2 text-sm outline-none ring-primary transition-all focus:ring-2"
-            />
+            <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">
+              <input
+                ref={searchInputRef}
+                type="text"
+                data-testid="archive-search-input"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="搜索任务、复盘或账号..."
+                className="w-full rounded-xl bg-slate-100 px-4 py-2 text-sm outline-none ring-primary transition-all focus:ring-2"
+              />
+              <button
+                type="submit"
+                data-testid="archive-search-submit"
+                className="shrink-0 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600"
+              >
+                确定
+              </button>
+            </form>
           </div>
         ) : null}
+      </header>
 
-        <div className="px-4 pb-3 pt-2">
+      <main className="flex-1 overflow-y-auto pb-24">
+        <section className="px-4 pt-3">
+          <PageGuide
+            storageKey={ARCHIVE_GUIDE_STORAGE_KEY}
+            testId="archive-page-guide"
+            title="按日期查看任务，也可以直接全局搜索"
+            items={[
+              '点日历中的日期可以查看当天任务，左右箭头切换月份。',
+              '右上角搜索支持按任务标题、复盘内容和账号名称查找。',
+              '列表里的任务向左滑可删除；要调整顺序时先点“排序任务”，再拖动卡片。',
+            ]}
+          />
+        </section>
+
+        <section className="border-b border-slate-200 bg-white/70 px-4 pb-3 pt-2.5 backdrop-blur-sm">
           <div className="mb-4 flex items-center justify-between">
-            <button className="text-[26px] font-bold tracking-tight text-slate-900">
+            <button className="text-[24px] font-bold tracking-tight text-slate-900">
               {viewYear}年 {viewMonth}月
             </button>
             <div className="flex gap-4 text-primary">
@@ -300,17 +344,40 @@ export default function Archive({
               );
             })}
           </div>
-        </div>
-      </header>
+        </section>
 
-      <main className="flex-1 overflow-y-auto pb-24">
-        <div className="sticky top-0 z-10 bg-gray-ios px-4 py-4 backdrop-blur-sm">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            {searchQuery ? '搜索结果' : `${viewYear}年${viewMonth}月${selectedDate}日`}
-          </h2>
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-gray-ios/95 px-4 py-4 backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              {searchQuery ? '搜索结果' : `${viewYear}年${viewMonth}月${selectedDate}日`}
+            </h2>
+            <button
+              type="button"
+              data-testid="archive-task-sort-toggle"
+              onClick={() => setIsTaskSortMode((current) => !current)}
+              disabled={Boolean(searchQuery.trim())}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                searchQuery.trim()
+                  ? 'cursor-not-allowed bg-slate-100 text-slate-400'
+                  : isTaskSortMode
+                    ? 'bg-slate-900 text-white hover:bg-slate-700'
+                    : 'border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
+              }`}
+            >
+              {isTaskSortMode ? '完成排序' : '排序任务'}
+            </button>
+          </div>
+          {isTaskSortMode && !searchQuery.trim() ? (
+            <p
+              data-testid="archive-task-sort-mode"
+              className="mt-2 text-xs leading-5 text-slate-500"
+            >
+              拖动同一状态内的任务即可调整顺序，排序会自动保存。
+            </p>
+          ) : null}
         </div>
 
-        <div className="space-y-6 px-5">
+        <div className="space-y-6 px-5 pt-4">
           {filteredTasks.length ? (
             TASK_STATUSES.map((status) => {
               const items = filteredTasks.filter((task) => task.status === status);
@@ -337,30 +404,62 @@ export default function Archive({
                           />
                         </div>
                       ))
-                    ) : (
+                    ) : isTaskSortMode ? (
                       <Reorder.Group axis="y" values={items} onReorder={(nextItems) => void handleReorder(status, nextItems)}>
                         {items.map((task) => (
                           <Reorder.Item key={task.id} value={task}>
-                            <SwipeableTask task={task} onEdit={openTaskModal} onDelete={handleDeleteTask}>
-                              <TaskCard
-                                task={task}
-                                accountName={accountNameById.get(task.accountId)}
-                                color={statusColor(status)}
-                                onEdit={() => openTaskModal(task)}
-                                onDelete={() => void handleDeleteTask(task)}
-                                draggable
-                              />
-                            </SwipeableTask>
+                            <TaskCard
+                              task={task}
+                              accountName={accountNameById.get(task.accountId)}
+                              color={statusColor(status)}
+                              onEdit={() => openTaskModal(task)}
+                              onDelete={() => void handleDeleteTask(task)}
+                              draggable
+                            />
                           </Reorder.Item>
                         ))}
                       </Reorder.Group>
+                    ) : (
+                      items.map((task) => (
+                        <div key={task.id}>
+                          <SwipeableTask task={task} onEdit={openTaskModal} onDelete={handleDeleteTask}>
+                            <TaskCard
+                              task={task}
+                              accountName={accountNameById.get(task.accountId)}
+                              color={statusColor(status)}
+                              onEdit={() => openTaskModal(task)}
+                              onDelete={() => void handleDeleteTask(task)}
+                            />
+                          </SwipeableTask>
+                        </div>
+                      ))
                     )}
                   </div>
                 </div>
               );
             })
           ) : (
-            <div className="py-12 text-center text-sm text-slate-400">{searchQuery ? '没有找到相关记录' : '这一天没有记录'}</div>
+            <div className="py-12 text-center">
+              {searchQuery ? (
+                <div className="text-sm text-slate-400">没有找到相关记录</div>
+              ) : tasks.length ? (
+                <div className="text-sm text-slate-400">这一天没有记录</div>
+              ) : (
+                <div className="mx-auto max-w-sm rounded-3xl border border-dashed border-slate-300 bg-white p-6">
+                  <div className="text-base font-semibold text-slate-900">归档还是空的</div>
+                  <div className="mt-2 text-sm leading-6 text-slate-500">
+                    先去主页创建第一个任务，归档页就会按日期自动展示出来。
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('home')}
+                    className="mt-4 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-600"
+                  >
+                    去主页创建任务
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </main>
@@ -384,7 +483,7 @@ export default function Archive({
                   value={taskDraft.title}
                   onChange={(event) => setTaskDraft((prev) => ({ ...prev, title: event.target.value }))}
                   placeholder="例如：周末探店 Vlog"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                  className={TASK_FIELD_CLASS}
                 />
               </div>
 
@@ -394,7 +493,7 @@ export default function Archive({
                   data-testid="archive-task-account-select"
                   value={taskDraft.accountId}
                   onChange={(event) => setTaskDraft((prev) => ({ ...prev, accountId: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                  className={TASK_FIELD_CLASS}
                 >
                   {accounts.map((account) => (
                     <option key={account.id} value={account.id}>
@@ -412,7 +511,7 @@ export default function Archive({
                     data-testid="archive-task-date-input"
                     value={taskDraft.date}
                     onChange={(event) => setTaskDraft((prev) => ({ ...prev, date: event.target.value }))}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                    className={TASK_FIELD_CLASS}
                   />
                 </div>
                 <div>
@@ -422,7 +521,7 @@ export default function Archive({
                     data-testid="archive-task-location-input"
                     value={taskDraft.location}
                     onChange={(event) => setTaskDraft((prev) => ({ ...prev, location: event.target.value }))}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-primary"
+                    className={TASK_FIELD_CLASS}
                   />
                 </div>
               </div>
@@ -432,10 +531,11 @@ export default function Archive({
                 <div className="grid grid-cols-3 gap-2">
                   {TASK_STATUSES.map((status) => (
                     <button
+                      type="button"
                       key={status}
                       data-testid={`archive-task-status-${status}`}
                       onClick={() => setTaskDraft((prev) => ({ ...prev, status }))}
-                      className={`rounded-xl py-2.5 text-sm font-medium transition-all ${
+                      className={`${TASK_STATUS_BUTTON_BASE_CLASS} ${
                         taskDraft.status === status ? 'bg-primary text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                     >
@@ -567,8 +667,19 @@ function TaskCard({
   draggable?: boolean;
 }) {
   return (
-    <div data-testid="archive-task-card" className="flex w-full items-center gap-3 p-3.5 transition-colors hover:bg-slate-50">
-      {draggable ? <div className="h-4 w-4 rounded-full bg-slate-200" /> : <div className="h-4 w-4" />}
+    <div
+      data-testid={draggable ? 'archive-sort-task-row' : 'archive-task-card'}
+      className={`flex w-full items-center gap-3 p-3.5 transition-colors ${
+        draggable ? 'cursor-grab active:cursor-grabbing' : 'hover:bg-slate-50'
+      }`}
+    >
+      {draggable ? (
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+          <GripVertical className="h-4 w-4" />
+        </div>
+      ) : (
+        <div className="h-8 w-8 shrink-0" />
+      )}
       <div className="h-8 w-1 shrink-0 rounded-full" style={{ backgroundColor: color }} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -587,24 +698,28 @@ function TaskCard({
           <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">有复盘</span>
         ) : null}
       </div>
-      <div className="flex items-center gap-1">
-        <button
-          onClick={onEdit}
-          data-testid="archive-task-edit"
-          aria-label={`编辑任务 ${task.title}`}
-          className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
-        >
-          <Edit3 className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={onDelete}
-          data-testid="archive-task-delete"
-          aria-label={`删除任务 ${task.title}`}
-          className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-rose-500"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
+      {draggable ? (
+        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500">拖动排序</span>
+      ) : (
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onEdit}
+            data-testid="archive-task-edit"
+            aria-label={`编辑任务 ${task.title}`}
+            className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+          >
+            <Edit3 className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={onDelete}
+            data-testid="archive-task-delete"
+            aria-label={`删除任务 ${task.title}`}
+            className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-rose-500"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

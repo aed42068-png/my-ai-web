@@ -42,8 +42,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const fallback = `Request failed with status ${response.status}`;
     try {
-      const data = (await response.json()) as { error?: string };
-      throw new Error(data.error || fallback);
+      const data = (await response.json()) as unknown;
+      throw new Error(extractErrorMessage(data) || fallback);
     } catch (error) {
       if (error instanceof Error) {
         throw error;
@@ -57,6 +57,63 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function extractErrorMessage(data: unknown): string | null {
+  if (typeof data === 'string') {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    const parts = data.map(extractErrorMessage).filter(Boolean);
+    return parts.length ? parts.join('；') : null;
+  }
+
+  if (data && typeof data === 'object') {
+    const record = data as Record<string, unknown>;
+
+    if (typeof record.error === 'string') {
+      return record.error;
+    }
+
+    if (record.error) {
+      const nestedError = extractErrorMessage(record.error);
+      if (nestedError) {
+        return nestedError;
+      }
+    }
+
+    if (typeof record.message === 'string') {
+      return record.message;
+    }
+
+    if (Array.isArray(record.issues)) {
+      const issues = record.issues
+        .map((issue) => {
+          if (!issue || typeof issue !== 'object') {
+            return null;
+          }
+
+          const typedIssue = issue as { message?: unknown; path?: unknown };
+          if (typeof typedIssue.message !== 'string') {
+            return null;
+          }
+
+          if (Array.isArray(typedIssue.path) && typedIssue.path.length) {
+            return `${typedIssue.path.join('.')}: ${typedIssue.message}`;
+          }
+
+          return typedIssue.message;
+        })
+        .filter(Boolean);
+
+      if (issues.length) {
+        return issues.join('；');
+      }
+    }
+  }
+
+  return null;
 }
 
 export const api = {
