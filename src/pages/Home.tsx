@@ -570,22 +570,23 @@ export default function Home({
         </section>
 
         <section className="mt-6">
-          <div className="mb-3 flex items-center justify-between px-5">
-            <h2 className="text-lg font-bold text-slate-900">账号管理</h2>
-            <div className="flex items-center gap-2">
+          <div className="mb-3 px-5">
+            <div className="flex flex-col gap-3">
+              <h2 className="text-lg font-bold text-slate-900">账号管理</h2>
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
               <button
                 onClick={() => activeAccount && openAccountModal(activeAccount)}
                 data-testid="home-edit-current-account"
                 disabled={!activeAccount}
-                className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+                className="col-span-2 flex min-w-0 items-center justify-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 sm:col-auto sm:justify-start sm:py-1.5"
               >
                 <Edit3 className="h-3.5 w-3.5" />
-                编辑当前账号
+                编辑账号
               </button>
               <button
                 onClick={() => setIsAccountOverviewOpen(true)}
                 data-testid="home-account-overview-open"
-                className="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                className="flex min-w-0 items-center justify-center gap-1 rounded-full border border-primary/10 bg-primary/5 px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/10 sm:justify-start sm:border-transparent sm:bg-transparent sm:px-2 sm:py-1"
               >
                 <ListFilter className="h-3.5 w-3.5" />
                 账号一览
@@ -593,12 +594,13 @@ export default function Home({
               <button
                 onClick={() => openAccountModal()}
                 data-testid="home-add-account"
-                className="flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-600"
+                className="flex min-w-0 items-center justify-center gap-1 rounded-full bg-primary px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-600 sm:py-1.5"
               >
                 <Plus className="h-3.5 w-3.5" />
                 添加账号
               </button>
             </div>
+          </div>
           </div>
 
           {accounts.length ? (

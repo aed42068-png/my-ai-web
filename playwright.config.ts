@@ -1,4 +1,4 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -12,6 +12,8 @@ export default defineConfig({
   reporter: [['list'], ['html', { outputFolder: 'output/playwright/report', open: 'never' }]],
   outputDir: 'output/playwright/test-results',
   use: {
+    ...devices['iPhone 12 Pro'],
+    browserName: 'chromium',
     baseURL: 'http://localhost:3100',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

@@ -24,6 +24,8 @@
 - 浏览器自动化：
   - 探索式验证：`agent-browser`
   - 可执行回归：`@playwright/test`
+- Playwright 默认设备：Chromium 下的 `iPhone 12 Pro` 模拟
+- E2E 默认把移动端布局和触控交互当作主回归面，而不是桌面视口
 
 ### 2.4 当前自动化入口
 
@@ -32,6 +34,7 @@
 - 测试报告：`npm run e2e:report`
 - Playwright 配置文件：[playwright.config.ts](/Users/xiaohao-mini/Code/my-ai-web/playwright.config.ts)
 - 测试目录：[tests/e2e](/Users/xiaohao-mini/Code/my-ai-web/tests/e2e)
+- 当前默认模拟设备来自 Playwright `devices['iPhone 12 Pro']`，并固定运行在 `chromium`
 
 ### 2.2 当前环境假设
 

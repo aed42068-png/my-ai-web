@@ -421,16 +421,16 @@ export default function Ads({
           <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-[#10131e]/70 to-black/80" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,204,77,0.22),transparent_38%),radial-gradient(circle_at_bottom_left,rgba(244,63,94,0.22),transparent_34%)]" />
 
-          <div className="relative px-5 py-5 text-white">
-            <div className="flex items-start justify-between gap-3">
-              <div>
+          <div className="relative px-4 py-4 text-white sm:px-5 sm:py-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+              <div className="min-w-0">
                 <div className="inline-flex items-center gap-2 rounded-full bg-white/12 px-3 py-1 text-[11px] font-semibold tracking-[0.08em] text-white/90 backdrop-blur-sm">
                   <span>{selectedYear}年{selectedMonth}月</span>
                   <span className="h-1 w-1 rounded-full bg-white/70" />
                   <span>收益总览</span>
                 </div>
-                <div className="mt-4 flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-2xl border border-white/35 bg-white/10 p-0.5 shadow-md backdrop-blur-sm">
+                <div className="mt-3 flex items-center gap-3 sm:mt-4">
+                  <div className="h-10 w-10 rounded-2xl border border-white/35 bg-white/10 p-0.5 shadow-md backdrop-blur-sm sm:h-12 sm:w-12">
                     <img
                       alt="账号头像"
                       className="h-full w-full rounded-2xl object-cover"
@@ -438,20 +438,22 @@ export default function Ads({
                     />
                   </div>
                   <div className="min-w-0">
-                    <div className="truncate text-xl font-semibold text-white">{selectedAccount?.name || '未命名账号'}</div>
-                    <div className="mt-1 text-xs text-white/70">账号截图已直接作为本页背景预览</div>
+                    <div className="truncate text-lg font-semibold text-white sm:text-xl">{selectedAccount?.name || '未命名账号'}</div>
+                    <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-white/70 sm:text-xs">
+                      账号截图已直接作为本页背景预览
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="flex min-w-0 flex-col items-end gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <div className="relative min-w-0 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 backdrop-blur-sm">
+              <div className="flex min-w-0 flex-col gap-2 sm:items-end">
+                <div className="flex min-w-0 items-center gap-2 self-stretch sm:self-auto">
+                  <div className="relative min-w-0 flex-1 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 backdrop-blur-sm sm:w-auto sm:flex-none">
                     <select
                       data-testid="ads-account-select"
                       value={selectedAccountId}
                       onChange={(event) => setSelectedAccountId(event.target.value)}
-                      className="max-w-[132px] appearance-none truncate bg-transparent pr-5 text-sm font-semibold text-white outline-none"
+                      className="w-full min-w-0 appearance-none truncate bg-transparent pr-5 text-sm font-semibold text-white outline-none sm:max-w-[132px]"
                     >
                       {accounts.map((account) => (
                         <option key={account.id} value={account.id} className="text-slate-900">
@@ -480,7 +482,7 @@ export default function Ads({
                     setIsAccountModalOpen(true);
                   }}
                   data-testid="ads-edit-account"
-                  className="flex items-center gap-1 rounded-full border border-white/20 bg-black/25 px-3 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/40"
+                  className="flex items-center justify-center gap-1 self-stretch rounded-full border border-white/20 bg-black/25 px-3 py-2 text-[11px] font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/40 sm:self-auto sm:py-1.5"
                 >
                   <Edit3 className="h-3.5 w-3.5" />
                   编辑封面
@@ -488,8 +490,8 @@ export default function Ads({
               </div>
             </div>
 
-            <div className="mt-7 grid grid-cols-2 gap-4">
-              <div className="rounded-[24px] border border-[#ffe8b0]/30 bg-black/20 p-4 backdrop-blur-sm">
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:mt-7 sm:gap-4">
+              <div className="rounded-[22px] border border-[#ffe8b0]/30 bg-black/20 p-3.5 backdrop-blur-sm sm:rounded-[24px] sm:p-4">
                 <div className="text-[12px] font-medium text-[#ffe2a3]">总预估收入</div>
                 {isLoadingRecords ? (
                   <>
@@ -499,22 +501,32 @@ export default function Ads({
                   </>
                 ) : (
                   <>
-                    <div className="mt-2 text-[34px] font-bold leading-none tracking-tight text-[#ffd24d]">¥ {formatCurrency(selectedSummary.income)}</div>
-                    <div className="mt-3 text-[11px] text-[#ffe7a8]">已结算 ¥ {selectedSummary.settled.toLocaleString('zh-CN')}</div>
-                    <div className="mt-1 text-[11px] text-[#ffc857]">未结算 ¥ {selectedSummary.unsettled.toLocaleString('zh-CN')}</div>
+                    <div className="mt-2 flex items-end gap-1 text-[#ffd24d]">
+                      <span className="text-[18px] font-bold leading-none sm:text-[20px]">¥</span>
+                      <span className="text-[clamp(1.7rem,8vw,2.125rem)] font-bold leading-none tracking-tight">
+                        {formatCurrency(selectedSummary.income)}
+                      </span>
+                    </div>
+                    <div className="mt-3 text-[10px] leading-4 text-[#ffe7a8] sm:text-[11px]">已结算 ¥ {selectedSummary.settled.toLocaleString('zh-CN')}</div>
+                    <div className="mt-1 text-[10px] leading-4 text-[#ffc857] sm:text-[11px]">未结算 ¥ {selectedSummary.unsettled.toLocaleString('zh-CN')}</div>
                   </>
                 )}
               </div>
 
-              <div className="rounded-[24px] border border-rose-300/20 bg-black/20 p-4 text-right backdrop-blur-sm">
+              <div className="rounded-[22px] border border-rose-300/20 bg-black/20 p-3.5 text-right backdrop-blur-sm sm:rounded-[24px] sm:p-4">
                 <div className="text-[12px] font-medium text-rose-200">总投放支出</div>
                 {isLoadingRecords ? (
                   <div className="ml-auto mt-2 h-10 w-28 animate-pulse rounded-full bg-white/10" />
                 ) : (
                   <>
-                    <div className="mt-2 text-[34px] font-bold leading-none tracking-tight text-rose-400">¥ {formatCurrency(selectedSummary.expense)}</div>
-                    <div className="mt-3 text-[11px] text-rose-200">用于广告、投流与分发</div>
-                    <div className="mt-1 text-[11px] text-white/50">当前账号当月累计</div>
+                    <div className="mt-2 flex items-end justify-end gap-1 text-rose-400">
+                      <span className="text-[18px] font-bold leading-none sm:text-[20px]">¥</span>
+                      <span className="text-[clamp(1.7rem,8vw,2.125rem)] font-bold leading-none tracking-tight">
+                        {formatCurrency(selectedSummary.expense)}
+                      </span>
+                    </div>
+                    <div className="mt-3 text-[10px] leading-4 text-rose-200 sm:text-[11px]">用于广告、投流与分发</div>
+                    <div className="mt-1 text-[10px] leading-4 text-white/50 sm:text-[11px]">当前账号当月累计</div>
                   </>
                 )}
               </div>

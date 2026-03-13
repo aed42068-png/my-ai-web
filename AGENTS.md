@@ -45,6 +45,7 @@ As of `2026-03-12`:
 - local E2E coverage currently passes with `8 passed`
 - a non-destructive production smoke pass has already been run manually
 - Home/Archive/Ads all have onboarding guides, explicit sort entry points, and mobile spacing refinements
+- Playwright E2E now defaults to Chromium-based `iPhone 12 Pro` emulation; treat mobile layout as the primary regression surface
 
 ## Product Areas
 
@@ -58,6 +59,7 @@ As of `2026-03-12`:
 - account creation and editing
 - home account cards use an inset preview treatment so uploaded covers do not feel overly zoomed
 - mobile header/footer have already been compressed to preserve first-screen space
+- the Home account action row must remain mobile-first; keep it in a compact stacked/grid layout instead of forcing title + three actions onto one line
 - dismissible usage guide with localStorage persistence
 - task create/edit/delete
 - task status advances via dedicated progress dot
@@ -82,6 +84,7 @@ As of `2026-03-12`:
 - dismissible usage guide with localStorage persistence
 - empty-state onboarding for first-time setup
 - top hero uses current account screenshot as the main background
+- the Ads hero must stay readable under mobile emulation; keep account controls and summary numbers compact enough for narrow widths
 - income is styled with yellow/gold accents, expense with red accents
 - records are lazy-loaded only after entering the Ads tab
 - month switching
@@ -136,6 +139,10 @@ npm run e2e
 npm run e2e:headed
 ```
 
+Note:
+
+- Both commands now run under Playwright mobile emulation (`iPhone 12 Pro` metrics in Chromium) by default
+
 Build:
 
 ```bash
@@ -181,6 +188,7 @@ For UI or API changes:
 
 1. Run `npm run lint`
 2. Run `npm run e2e`
+3. Treat the mobile-emulated result as the primary pass/fail signal for layout and interaction regressions
 
 For production deploys or release fixes:
 

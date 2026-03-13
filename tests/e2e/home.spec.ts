@@ -77,7 +77,6 @@ test('home flow: switch account, create account, edit account, create task, comp
 });
 
 test('home flow: account tabs and card carousel stay in sync', async ({ page }) => {
-  await page.setViewportSize({ width: 430, height: 932 });
   await gotoHome(page);
 
   const accountTabs = page.getByTestId('home-account-tab');
