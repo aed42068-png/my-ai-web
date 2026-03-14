@@ -62,7 +62,7 @@ npm run dev
 
 - [skills/mam-task/SKILL.md](/Users/xiaohao-mini/Code/my-ai-web/skills/mam-task/SKILL.md)
 
-它现在不仅能写任务，也能查询账号/任务，并在写入前自动做重复检查。详细配置见 [docs/agent-api.md](/Users/xiaohao-mini/Code/my-ai-web/docs/agent-api.md)。
+它现在不仅能写任务，也能查询账号/任务/投放记录，并在写入前自动做重复检查。详细配置见 [docs/agent-api.md](/Users/xiaohao-mini/Code/my-ai-web/docs/agent-api.md)。
 
 ## R2 CORS
 
@@ -87,6 +87,9 @@ npm run dev
 - `GET /api/agent/tasks`
 - `GET /api/agent/tasks/today`
 - `POST /api/agent/tasks/batch`
+- `GET /api/agent/ad-records`
+- `GET /api/agent/ad-records/monthly`
+- `POST /api/agent/ad-records/batch`
 - `POST /api/uploads/sign`
 - `POST /api/uploads/complete`
 - `GET /api/assets/*`

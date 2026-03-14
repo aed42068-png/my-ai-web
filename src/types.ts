@@ -180,3 +180,67 @@ export interface AgentTaskTodayResponse {
     limit: number;
   };
 }
+
+export interface AgentAdRecordQueryFilters {
+  accountId: string | null;
+  date: string | null;
+  type: AdRecordType | null;
+  settlementStatus: IncomeSettlement | null;
+  limit: number;
+}
+
+export interface AgentAdRecordListResponse {
+  records: AdRecord[];
+  filters: AgentAdRecordQueryFilters;
+}
+
+export interface AgentAdRecordMonthlyRow {
+  month: number;
+  income: number;
+  expense: number;
+  settled: number;
+  unsettled: number;
+}
+
+export interface AgentAdRecordMonthlyResponse {
+  year: number;
+  timezone: string;
+  months: AgentAdRecordMonthlyRow[];
+  totals: {
+    income: number;
+    expense: number;
+    settled: number;
+    unsettled: number;
+  };
+  filters: {
+    accountId: string | null;
+  };
+}
+
+export interface AgentAdRecordBatchItemInput {
+  accountId: string;
+  title: string;
+  date: string;
+  note?: string;
+  type: AdRecordType;
+  amount: number;
+  settlementStatus?: IncomeSettlement | null;
+}
+
+export interface AgentAdRecordBatchInput {
+  source: string;
+  timezone?: string;
+  rawText?: string;
+  records: AgentAdRecordBatchItemInput[];
+}
+
+export interface AgentAdRecordBatchSkippedItem {
+  index: number;
+  reason: string;
+}
+
+export interface AgentAdRecordBatchResponse {
+  requestId: string;
+  created: AdRecord[];
+  skipped: AgentAdRecordBatchSkippedItem[];
+}

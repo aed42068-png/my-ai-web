@@ -38,7 +38,7 @@ Key runtime model:
 - bootstrap cache uses `localStorage` with TTL and silent refresh
 - image uploads go `Browser -> Worker sign -> direct PUT to R2 -> Worker complete -> D1`
 - external AI writes go through `/api/agent/*`, not the browser CRUD endpoints
-- agent task writes require Bearer auth, `Idempotency-Key`, and are audited in `agent_requests`
+- agent task and ad-record writes require Bearer auth, `Idempotency-Key`, and are audited in `agent_requests`
 - page guides persist dismissal state in `localStorage`
 
 ## Current Delivery State
@@ -47,13 +47,13 @@ As of `2026-03-14`:
 
 - production domain is live at `https://mam.midao.site`
 - current product is already API-driven and no longer a front-end-only prototype
-- local E2E coverage currently passes with `14 passed`
+- local E2E coverage currently passes with `18 passed`
 - a non-destructive production smoke pass has already been run manually
 - Home/Archive/Ads all have onboarding guides, explicit sort entry points, and mobile spacing refinements
 - Playwright E2E now defaults to Chromium-based `iPhone 12 Pro` emulation; treat mobile layout as the primary regression surface
 - agent-facing query/write API is implemented and covered by local E2E
 - a workspace OpenClaw-ready skill now exists at [skills/mam-task/SKILL.md](/Users/xiaohao-mini/Code/my-ai-web/skills/mam-task/SKILL.md)
-- the `mam-task` skill now supports read-before-write task checks and skips exact same-day duplicates before batch creation
+- the `mam-task` skill now supports read-before-write checks for both tasks and ad records, and skips exact same-day duplicates before batch creation
 - task forms now use `备注` as the user-facing copy while the stored/API field remains `location`
 - Home summary now supports `当前账号 / 全部账号` scope switching and shows a global task total alongside the current-account count
 
@@ -96,6 +96,7 @@ As of `2026-03-14`:
 ### Ads
 
 - account-based income/expense view
+- Ads reflects agent-created ad records through focus/visibility/interval refresh after records have been loaded once
 - dismissible usage guide with localStorage persistence
 - empty-state onboarding for first-time setup
 - top hero uses current account screenshot as the main background
@@ -113,8 +114,10 @@ As of `2026-03-14`:
 - `GET /api/agent/accounts` lists resolvable accounts for agent callers
 - `GET /api/agent/accounts/resolve` returns `exact / not_found / ambiguous`
 - `GET /api/agent/tasks` and `GET /api/agent/tasks/today` provide read-only task lookup for agents
-- `POST /api/agent/tasks/batch` remains the only public write API in v1
+- `GET /api/agent/ad-records` and `GET /api/agent/ad-records/monthly` provide read-only revenue/spend lookup for agents
+- `POST /api/agent/tasks/batch` and `POST /api/agent/ad-records/batch` are the public write APIs in v1
 - do not let external agents write through `/api/tasks`
+- do not let external agents write through `/api/ad-records`
 - keep Worker-side parsing strictly structural; natural-language understanding belongs in the caller skill
 - do not remove idempotency or agent request auditing
 

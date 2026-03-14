@@ -5,15 +5,21 @@ import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import type {
   Account,
+  AdRecord,
+  AdRecordInput,
   AgentAccountListResponse,
   AgentAccountResolveResponse,
+  AgentAdRecordBatchInput,
+  AgentAdRecordBatchResponse,
+  AgentAdRecordListResponse,
+  AgentAdRecordMonthlyResponse,
+  AgentAdRecordQueryFilters,
   AgentResolvedAccount,
   AgentTaskBatchInput,
   AgentTaskBatchResponse,
   AgentTaskListResponse,
   AgentTaskQueryFilters,
   AgentTaskTodayResponse,
-  AdRecord,
   Asset,
   HitStatus,
   Task,
@@ -103,6 +109,7 @@ const taskStatusSchema = z.enum(['已拍', '待拍', '已发']);
 const hitStatusSchema = z.enum(['爆款', '小爆款']).nullable();
 const recordTypeSchema = z.enum(['income', 'expense']);
 const settlementSchema = z.enum(['settled', 'unsettled']).nullable();
+const settlementFilterSchema = z.enum(['settled', 'unsettled']);
 
 const accountSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -174,6 +181,33 @@ const agentTaskBatchSchema = z.object({
   timezone: z.string().trim().min(1).max(60).default('Asia/Shanghai'),
   rawText: z.string().trim().max(4000).optional(),
   tasks: z.array(agentTaskItemSchema).min(1).max(20),
+});
+const agentAdRecordListQuerySchema = z.object({
+  accountId: z.string().trim().min(1).optional(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  type: recordTypeSchema.optional(),
+  settlementStatus: settlementFilterSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const agentAdRecordMonthlyQuerySchema = z.object({
+  accountId: z.string().trim().min(1).optional(),
+  year: z.coerce.number().int().min(2000).max(2100).optional(),
+  timezone: z.string().trim().min(1).max(60).default('Asia/Shanghai'),
+});
+const agentAdRecordItemSchema = z.object({
+  accountId: z.string().trim().min(1),
+  title: z.string().trim().min(1).max(160),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  note: z.string().trim().max(2000).optional(),
+  type: recordTypeSchema,
+  amount: z.number().positive(),
+  settlementStatus: settlementSchema.optional(),
+});
+const agentAdRecordBatchSchema = z.object({
+  source: z.string().trim().min(1).max(40),
+  timezone: z.string().trim().min(1).max(60).default('Asia/Shanghai'),
+  rawText: z.string().trim().max(4000).optional(),
+  records: z.array(agentAdRecordItemSchema).min(1).max(20),
 });
 const LOCAL_AGENT_TEST_TOKEN = 'dev-agent-token';
 const DEFAULT_AGENT_TASK_LOCATION = 'AI录入';
@@ -388,6 +422,193 @@ app.get('/api/agent/tasks/today', async (c) => {
       limit: filters.limit,
     },
   } satisfies AgentTaskTodayResponse);
+});
+
+app.get('/api/agent/ad-records', async (c) => {
+  const parsed = agentAdRecordListQuerySchema.safeParse({
+    accountId: c.req.query('accountId'),
+    date: c.req.query('date'),
+    type: c.req.query('type'),
+    settlementStatus: c.req.query('settlementStatus'),
+    limit: c.req.query('limit'),
+  });
+
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Invalid query',
+        issues: parsed.error.issues.map(({ path, message }) => ({
+          path: path.join('.'),
+          message,
+        })),
+      },
+      422
+    );
+  }
+
+  const filters: AgentAdRecordQueryFilters = {
+    accountId: parsed.data.accountId ?? null,
+    date: parsed.data.date ?? null,
+    type: parsed.data.type ?? null,
+    settlementStatus: parsed.data.settlementStatus ?? null,
+    limit: parsed.data.limit,
+  };
+
+  const records = await listAdRecords(c.env.DB, filters);
+  return c.json({
+    records,
+    filters,
+  } satisfies AgentAdRecordListResponse);
+});
+
+app.get('/api/agent/ad-records/monthly', async (c) => {
+  const parsed = agentAdRecordMonthlyQuerySchema.safeParse({
+    accountId: c.req.query('accountId'),
+    year: c.req.query('year'),
+    timezone: c.req.query('timezone'),
+  });
+
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Invalid query',
+        issues: parsed.error.issues.map(({ path, message }) => ({
+          path: path.join('.'),
+          message,
+        })),
+      },
+      422
+    );
+  }
+
+  let resolvedYear: number;
+  try {
+    resolvedYear = parsed.data.year ?? Number(getDateInTimeZone(parsed.data.timezone).slice(0, 4));
+  } catch {
+    return c.json(
+      {
+        error: 'Invalid query',
+        issues: [
+          {
+            path: 'timezone',
+            message: 'Invalid timezone',
+          },
+        ],
+      },
+      422
+    );
+  }
+
+  const months = await listMonthlyAdRecordSummary(c.env.DB, {
+    accountId: parsed.data.accountId ?? null,
+    year: resolvedYear,
+  });
+
+  const totals = months.reduce(
+    (result, row) => ({
+      income: result.income + row.income,
+      expense: result.expense + row.expense,
+      settled: result.settled + row.settled,
+      unsettled: result.unsettled + row.unsettled,
+    }),
+    { income: 0, expense: 0, settled: 0, unsettled: 0 }
+  );
+
+  return c.json({
+    year: resolvedYear,
+    timezone: parsed.data.timezone,
+    months,
+    totals,
+    filters: {
+      accountId: parsed.data.accountId ?? null,
+    },
+  } satisfies AgentAdRecordMonthlyResponse);
+});
+
+app.post('/api/agent/ad-records/batch', async (c) => {
+  const idempotencyKey = c.req.header('idempotency-key')?.trim();
+  if (!idempotencyKey) {
+    return c.json({ error: 'Idempotency-Key header is required' }, 400);
+  }
+
+  const rawBody = await c.req.text();
+  if (!rawBody.trim()) {
+    return c.json({ error: 'Request body is required' }, 422);
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 422);
+  }
+
+  const parsed = agentAdRecordBatchSchema.safeParse(payload);
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Invalid request body',
+        issues: parsed.error.issues.map(({ path, message }) => ({
+          path: path.join('.'),
+          message,
+        })),
+      },
+      422
+    );
+  }
+
+  const input: AgentAdRecordBatchInput = parsed.data;
+  const reserved = await reserveAgentRequest(c.env.DB, {
+    id: createId('agentreq'),
+    source: input.source,
+    idempotencyKey,
+    rawText: input.rawText ?? null,
+    requestBody: JSON.stringify(input),
+  });
+
+  if (reserved.status === 'existing') {
+    return replayAgentRequest(c, reserved.row);
+  }
+
+  const requestId = reserved.row.id;
+
+  try {
+    const accountIssues = await findMissingAdRecordAccountIssues(c.env.DB, input.records);
+    if (accountIssues.length) {
+      const payload = {
+        error: 'Invalid request body',
+        issues: accountIssues,
+      };
+      await finalizeAgentRequest(c.env.DB, requestId, 'failed', payload);
+      return c.json(payload, 422);
+    }
+
+    const created: AdRecord[] = [];
+    for (const recordInput of input.records) {
+      created.push(
+        await createAdRecordRecord(c.env.DB, {
+          ...recordInput,
+          note: recordInput.note?.trim() ?? '',
+          settlementStatus: recordInput.type === 'income' ? (recordInput.settlementStatus ?? null) : null,
+        })
+      );
+    }
+
+    const response = {
+      requestId,
+      created,
+      skipped: [],
+    } satisfies AgentAdRecordBatchResponse;
+
+    await finalizeAgentRequest(c.env.DB, requestId, 'succeeded', response);
+    return c.json(response, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create agent ad records';
+    await finalizeAgentRequest(c.env.DB, requestId, 'failed', {
+      error: message,
+    });
+    throw error;
+  }
 });
 
 app.get('/api/accounts', async (c) => {
@@ -678,42 +899,8 @@ app.post('/api/ad-records', zValidator('json', adRecordSchema), async (c) => {
     return c.json({ error: 'Account not found' }, 404);
   }
 
-  const id = createId('record');
-  const now = nowIso();
-
-  await c.env.DB.prepare(
-    `INSERT INTO ad_records (id, account_id, title, date, note, type, amount, settlement_status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(
-      id,
-      input.accountId,
-      input.title,
-      input.date,
-      input.note,
-      input.type,
-      input.amount,
-      input.settlementStatus ?? null,
-      now,
-      now
-    )
-    .run();
-
-  return c.json(
-    {
-      id,
-      accountId: input.accountId,
-      title: input.title,
-      date: input.date,
-      note: input.note,
-      type: input.type,
-      amount: input.amount,
-      settlementStatus: input.settlementStatus ?? null,
-      createdAt: now,
-      updatedAt: now,
-    } satisfies AdRecord,
-    201
-  );
+  const created = await createAdRecordRecord(c.env.DB, input);
+  return c.json(created satisfies AdRecord, 201);
 });
 
 app.patch('/api/ad-records/:id', zValidator('json', adRecordPatchSchema), async (c) => {
@@ -1072,6 +1259,121 @@ async function listTasks(
   return result.results.map(mapTask);
 }
 
+async function listAdRecords(
+  db: D1Database,
+  filters: Partial<AgentAdRecordQueryFilters> = {}
+): Promise<AdRecord[]> {
+  const whereClauses: string[] = [];
+  const params: Array<string | number> = [];
+
+  if (filters.accountId) {
+    whereClauses.push('account_id = ?');
+    params.push(filters.accountId);
+  }
+
+  if (filters.date) {
+    whereClauses.push('date = ?');
+    params.push(filters.date);
+  }
+
+  if (filters.type) {
+    whereClauses.push('type = ?');
+    params.push(filters.type);
+  }
+
+  if (filters.settlementStatus) {
+    whereClauses.push('settlement_status = ?');
+    params.push(filters.settlementStatus);
+  }
+
+  const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  const limitSql = typeof filters.limit === 'number' ? '\n     LIMIT ?' : '';
+
+  const result = await db
+    .prepare(
+      `SELECT id, account_id, title, date, note, type, amount, settlement_status, created_at, updated_at
+       FROM ad_records
+       ${whereSql}
+       ORDER BY date DESC, created_at DESC${limitSql}`
+    )
+    .bind(...(typeof filters.limit === 'number' ? [...params, filters.limit] : params))
+    .all<AdRecordRow>();
+
+  return result.results.map(mapAdRecord);
+}
+
+async function listMonthlyAdRecordSummary(
+  db: D1Database,
+  filters: {
+    accountId: string | null;
+    year: number;
+  }
+): Promise<AgentAdRecordMonthlyResponse['months']> {
+  const whereClauses = [`substr(date, 1, 4) = ?`];
+  const params: Array<string | number> = [String(filters.year)];
+
+  if (filters.accountId) {
+    whereClauses.push('account_id = ?');
+    params.push(filters.accountId);
+  }
+
+  const result = await db
+    .prepare(
+      `SELECT
+          CAST(substr(date, 6, 2) AS INTEGER) AS month,
+          COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
+          COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense,
+          COALESCE(SUM(CASE WHEN type = 'income' AND settlement_status = 'settled' THEN amount ELSE 0 END), 0) AS settled,
+          COALESCE(
+            SUM(
+              CASE
+                WHEN type = 'income' AND (settlement_status = 'unsettled' OR settlement_status IS NULL) THEN amount
+                ELSE 0
+              END
+            ),
+            0
+          ) AS unsettled
+       FROM ad_records
+       WHERE ${whereClauses.join(' AND ')}
+       GROUP BY substr(date, 6, 2)
+       ORDER BY month ASC`
+    )
+    .bind(...params)
+    .all<{
+      month: number;
+      income: number;
+      expense: number;
+      settled: number;
+      unsettled: number;
+    }>();
+
+  const summaryByMonth = new Map(
+    result.results.map((row) => [
+      Number(row.month),
+      {
+        month: Number(row.month),
+        income: Number(row.income),
+        expense: Number(row.expense),
+        settled: Number(row.settled),
+        unsettled: Number(row.unsettled),
+      },
+    ])
+  );
+
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1;
+    return (
+      summaryByMonth.get(month) ?? {
+        month,
+        income: 0,
+        expense: 0,
+        settled: 0,
+        unsettled: 0,
+      }
+    );
+  });
+}
+
 async function createTaskRecord(db: D1Database, input: TaskInput): Promise<Task> {
   const id = createId('task');
   const now = nowIso();
@@ -1103,6 +1405,33 @@ async function createTaskRecord(db: D1Database, input: TaskInput): Promise<Task>
   };
 }
 
+async function createAdRecordRecord(db: D1Database, input: AdRecordInput): Promise<AdRecord> {
+  const id = createId('record');
+  const now = nowIso();
+  const settlementStatus = input.type === 'income' ? (input.settlementStatus ?? null) : null;
+
+  await db
+    .prepare(
+      `INSERT INTO ad_records (id, account_id, title, date, note, type, amount, settlement_status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(id, input.accountId, input.title, input.date, input.note ?? '', input.type, input.amount, settlementStatus, now, now)
+    .run();
+
+  return {
+    id,
+    accountId: input.accountId,
+    title: input.title,
+    date: input.date,
+    note: input.note ?? '',
+    type: input.type,
+    amount: input.amount,
+    settlementStatus,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 async function findMissingTaskAccountIssues(
   db: D1Database,
   tasks: AgentTaskBatchInput['tasks']
@@ -1118,6 +1447,29 @@ async function findMissingTaskAccountIssues(
     if (!presenceByAccountId.get(task.accountId)) {
       issues.push({
         path: `tasks.${index}.accountId`,
+        message: 'Account not found',
+      });
+    }
+  }
+
+  return issues;
+}
+
+async function findMissingAdRecordAccountIssues(
+  db: D1Database,
+  records: AgentAdRecordBatchInput['records']
+): Promise<Array<{ path: string; message: string }>> {
+  const presenceByAccountId = new Map<string, boolean>();
+  const issues: Array<{ path: string; message: string }> = [];
+
+  for (const [index, record] of records.entries()) {
+    if (!presenceByAccountId.has(record.accountId)) {
+      presenceByAccountId.set(record.accountId, Boolean(await getAccountById(db, record.accountId)));
+    }
+
+    if (!presenceByAccountId.get(record.accountId)) {
+      issues.push({
+        path: `records.${index}.accountId`,
         message: 'Account not found',
       });
     }
@@ -1203,7 +1555,7 @@ async function finalizeAgentRequest(
 function replayAgentRequest(c: Context<AppContext>, row: AgentRequestRow) {
   if (row.status === 'succeeded' && row.result_body) {
     try {
-      return c.json(JSON.parse(row.result_body) as AgentTaskBatchResponse, 200);
+      return c.json(JSON.parse(row.result_body) as unknown, 200);
     } catch {
       return c.json({ error: 'Stored agent response is invalid', requestId: row.id }, 500);
     }

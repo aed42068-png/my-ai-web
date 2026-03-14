@@ -27,8 +27,18 @@
 - `resolve-account`
 - `list-tasks`
 - `list-today`
+- `list-ad-records`
+- `list-ad-records-monthly`
 - `check-batch`
 - `create-batch`
+- `check-ad-records-batch`
+- `create-ad-records-batch`
+
+当前提示词约定：
+
+- 用户自然语言里说“备注 / 说明 / 补充说明”时，skill 会把它理解为任务备注
+- 当前接口 payload 仍使用历史字段名 `location`
+- 这里的 `location` 不是地理位置语义，而是兼容历史字段名的任务备注
 
 不要只复制脚本，不复制 `SKILL.md`。OpenClaw 需要 `SKILL.md` 才能识别 skill。
 
@@ -158,14 +168,14 @@ cat <<'JSON' | node /你的路径/mam-task/scripts/mam-task.mjs create-batch
 {
   "source": "openclaw",
   "timezone": "Asia/Shanghai",
-  "rawText": "年轻朋友阿甜明天发豆包广告",
+  "rawText": "年轻朋友阿甜明天发豆包广告，备注：先出一版轻口播",
   "tasks": [
     {
       "accountId": "acc_travel",
       "title": "豆包广告发布",
       "date": "2026-03-14",
       "status": "待拍",
-      "location": "AI录入"
+      "location": "先出一版轻口播"
     }
   ]
 }
@@ -180,6 +190,8 @@ JSON
 
 脚本会在真正写入前先查询同账号同日期任务，并自动跳过标题重复的任务。
 
+这里的 `location` 是当前接口里的历史字段名，语义上代表任务备注。
+
 ### 8.3 只做重复检查
 
 ```bash
@@ -187,14 +199,14 @@ cat <<'JSON' | node /你的路径/mam-task/scripts/mam-task.mjs check-batch
 {
   "source": "openclaw",
   "timezone": "Asia/Shanghai",
-  "rawText": "年轻朋友阿甜明天发豆包广告",
+  "rawText": "年轻朋友阿甜明天发豆包广告，备注：先出一版轻口播",
   "tasks": [
     {
       "accountId": "acc_travel",
       "title": "豆包广告发布",
       "date": "2026-03-14",
       "status": "待拍",
-      "location": "AI录入"
+      "location": "先出一版轻口播"
     }
   ]
 }
@@ -206,6 +218,36 @@ JSON
 - `duplicateCheck`
 - `submittedCount`
 - `duplicateCount`
+
+### 8.4 记录投放或收益
+
+```bash
+cat <<'JSON' | node /你的路径/mam-task/scripts/mam-task.mjs create-ad-records-batch
+{
+  "source": "openclaw",
+  "timezone": "Asia/Shanghai",
+  "rawText": "年轻朋友阿甜今天投了 300 元豆包广告，备注：先跑冷启动",
+  "records": [
+    {
+      "accountId": "acc_travel",
+      "title": "豆包广告投放",
+      "date": "2026-03-14",
+      "type": "expense",
+      "amount": 300,
+      "note": "先跑冷启动"
+    }
+  ]
+}
+JSON
+```
+
+预期返回：
+
+- `requestId`
+- `created`
+- `skipped`
+
+脚本会在真正写入前先查询同账号同日期 ad records，并自动跳过标题、类型、金额都相同的重复记录。
 
 ## 9. 常见问题
 

@@ -10,8 +10,8 @@
 - 归档页 `Archive`：按日期查看、搜索、创建/编辑/删除任务、归档显示设置
 - 投放页 `Ads`：账号切换、收入/投放记录创建、编辑、删除、结算切换、月份切换、收入状态筛选
 - 上传链路：浏览器 -> Worker `sign` -> R2 `PUT` -> Worker `complete` -> D1 落库 -> 资产域名可读
-- Agent API：账号解析、Bearer 鉴权、批量建任务、幂等重放、页面自动同步
-- Agent API：账号列表、任务查询和今日任务视图
+- Agent API：账号解析、Bearer 鉴权、批量建任务、批量建投放/收益记录、幂等重放、页面自动同步
+- Agent API：账号列表、任务查询、今日任务视图、投放/收益查询和月度汇总
 - 页面操作提示：各页首次展示可关闭的使用指引，并记住关闭状态
 - 投放页顶部主卡直接使用当前账号截图作为背景
 - 首页账号卡使用内嵌预览结构，避免封面在列表里显得过度放大
@@ -76,8 +76,11 @@
 - Worker API 健康检查可用
 - `GET /api/agent/accounts/resolve` 的 `exact / not_found / ambiguous` 可用
 - `GET /api/agent/accounts`、`GET /api/agent/tasks`、`GET /api/agent/tasks/today` 可用
+- `GET /api/agent/ad-records`、`GET /api/agent/ad-records/monthly` 可用
 - `POST /api/agent/tasks/batch` 的 Bearer 鉴权、结构化校验、幂等重放可用
+- `POST /api/agent/ad-records/batch` 的 Bearer 鉴权、结构化校验、幂等重放可用
 - agent 新建任务后，网页端可通过 `focus` 自动同步到新数据
+- agent 新建投放/收益记录后，网页端可通过 `focus` 自动同步到 Ads 数据
 
 ### 3.2 必须做在线烟测
 
@@ -157,10 +160,15 @@
 - `accounts` 可返回可解析账号列表
 - `tasks` 支持 `accountId / date / status / limit` 查询
 - `tasks/today` 支持基于 `Asia/Shanghai` 的今日任务查询
+- `ad-records` 支持 `accountId / date / type / settlementStatus / limit` 查询
+- `ad-records/monthly` 支持按账号和年份读取 12 个月汇总
 - `tasks/batch` 一次可创建多条任务
+- `ad-records/batch` 一次可创建多条收入/投放记录
 - 同一个 `Idempotency-Key` 重放不会重复创建任务
+- 同一个 `Idempotency-Key` 重放不会重复创建投放/收益记录
 - 非法请求体返回 `422`
 - 页面无需整页刷新，仅通过 `focus` 即可看到 agent 新建任务
+- 页面无需整页刷新，仅通过 `focus` 即可看到 agent 新建投放/收益记录
 
 ## 5. 通过标准
 
@@ -197,6 +205,7 @@
 - 浏览器上传完成后的重试逻辑
 - Worker 对 R2 上传完成校验的双路径兜底
 - `Ads` 页新增了记录编辑、删除和结算状态快速切换路径
+- `Ads` 页在进入后会对 agent 创建的 ad records 做焦点/可见性轻量刷新
 - `AccountOverviewSheet` 的账号切换改成草稿态到提交态，降低自动化与实际交互的竞态
 - 本地 agent API 允许 localhost 专用 token，避免 E2E 依赖真实公网 secret
 
@@ -212,15 +221,15 @@
 
 - 执行日期：`2026-03-14`
 - 执行命令：`npm run e2e`
-- 结果：`14 passed`
-- 总耗时：约 `28.7s`
+- 结果：`18 passed`
+- 总耗时：约 `25.7s`
 
 覆盖通过的业务流：
 
 - `Home` 账号切换、上方账号 tab / 下方账号卡轮播同步、账号新增、编辑、任务创建、编辑、显式排序模式、状态流转、复盘保存、全局任务总数与概览范围切换
 - `Archive` 搜索、任务创建、编辑、删除、显式排序模式、显示设置持久化、备注字段文案更新
 - `Ads` 收入记录、投放记录、结算切换、编辑、删除、筛选、月份切换
-- `Agent API` 鉴权、账号列表、账号解析、任务查询、今日任务视图、批量创建、幂等重放、页面自动同步
+- `Agent API` 鉴权、账号列表、账号解析、任务查询、今日任务视图、投放/收益查询、月度汇总、批量创建、幂等重放、页面自动同步
 - `Guides` 三个页面的操作提示卡关闭持久化与重新打开
 - `Upload` 实时封面预览、封面位置确认、Worker 签名、R2 PUT、Worker complete、资产 URL 可读
 

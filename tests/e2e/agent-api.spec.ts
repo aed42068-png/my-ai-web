@@ -252,6 +252,155 @@ test('agent api: lists accounts, filtered tasks, and today tasks', async ({ requ
   expect(todayData.tasks.some((task) => task.title === futureTaskTitle)).toBe(false);
 });
 
+test('agent api: batch creates ad records once and replays by idempotency key', async ({ request }) => {
+  const idempotencyKey = uniqueName('agent-record-idempotency');
+  const incomeTitle = uniqueName('Agent收入记录');
+  const expenseTitle = uniqueName('Agent投放记录');
+  const payload = {
+    source: 'openclaw',
+    timezone: 'Asia/Shanghai',
+    rawText: '给旅行主账号记两笔收支',
+    records: [
+      {
+        accountId: 'acc_travel',
+        title: incomeTitle,
+        date: '2026-03-14',
+        note: '品牌季度合作回款',
+        type: 'income',
+        amount: 1888,
+        settlementStatus: 'settled',
+      },
+      {
+        accountId: 'acc_travel',
+        title: expenseTitle,
+        date: '2026-03-14',
+        note: 'Dou+ 加热投放',
+        type: 'expense',
+        amount: 300,
+      },
+    ],
+  };
+
+  const firstResponse = await request.post('/api/agent/ad-records/batch', {
+    headers: buildAgentHeaders(idempotencyKey),
+    data: payload,
+  });
+  expect(firstResponse.status()).toBe(201);
+  const firstData = (await firstResponse.json()) as {
+    requestId: string;
+    created: Array<{ id: string; title: string; type: string; note: string; settlementStatus: string | null }>;
+    skipped: unknown[];
+  };
+  expect(firstData.created).toHaveLength(2);
+  expect(firstData.skipped).toEqual([]);
+  expect(firstData.created.some((record) => record.title === incomeTitle && record.settlementStatus === 'settled')).toBe(true);
+  expect(firstData.created.some((record) => record.title === expenseTitle && record.type === 'expense' && record.note === 'Dou+ 加热投放')).toBe(true);
+
+  const replayResponse = await request.post('/api/agent/ad-records/batch', {
+    headers: buildAgentHeaders(idempotencyKey),
+    data: payload,
+  });
+  expect(replayResponse.status()).toBe(200);
+  const replayData = (await replayResponse.json()) as typeof firstData;
+  expect(replayData.requestId).toBe(firstData.requestId);
+  expect(replayData.created.map((record) => record.id)).toEqual(firstData.created.map((record) => record.id));
+
+  const recordsResponse = await request.get('/api/ad-records');
+  const records = (await recordsResponse.json()) as Array<{ title: string }>;
+  expect(records.filter((record) => record.title === incomeTitle)).toHaveLength(1);
+  expect(records.filter((record) => record.title === expenseTitle)).toHaveLength(1);
+});
+
+test('agent api: lists filtered ad records and monthly summary', async ({ request }) => {
+  const incomeTitle = uniqueName('Agent查询收入');
+  const expenseTitle = uniqueName('Agent查询投放');
+
+  const createResponse = await request.post('/api/agent/ad-records/batch', {
+    headers: buildAgentHeaders(uniqueName('agent-record-query')),
+    data: {
+      source: 'openclaw',
+      timezone: 'Asia/Shanghai',
+      rawText: '给旅行主账号记两笔 2026 年 3 月的记录',
+      records: [
+        {
+          accountId: 'acc_travel',
+          title: incomeTitle,
+          date: '2026-03-20',
+          note: '品牌回款',
+          type: 'income',
+          amount: 2600,
+          settlementStatus: 'unsettled',
+        },
+        {
+          accountId: 'acc_travel',
+          title: expenseTitle,
+          date: '2026-03-21',
+          note: '广告投流',
+          type: 'expense',
+          amount: 420,
+        },
+      ],
+    },
+  });
+  expect(createResponse.status()).toBe(201);
+
+  const recordsResponse = await request.get(
+    '/api/agent/ad-records?accountId=acc_travel&date=2026-03-20&type=income&settlementStatus=unsettled&limit=10',
+    {
+      headers: {
+        Authorization: `Bearer ${LOCAL_AGENT_TOKEN}`,
+      },
+    }
+  );
+  expect(recordsResponse.status()).toBe(200);
+  const recordsData = (await recordsResponse.json()) as {
+    records: Array<{ title: string; accountId: string; type: string; settlementStatus: string | null; date: string }>;
+    filters: {
+      accountId: string | null;
+      date: string | null;
+      type: string | null;
+      settlementStatus: string | null;
+      limit: number;
+    };
+  };
+  expect(recordsData.filters).toEqual({
+    accountId: 'acc_travel',
+    date: '2026-03-20',
+    type: 'income',
+    settlementStatus: 'unsettled',
+    limit: 10,
+  });
+  expect(recordsData.records.some((record) => record.title === incomeTitle)).toBe(true);
+  expect(recordsData.records.every((record) => record.accountId === 'acc_travel')).toBe(true);
+  expect(recordsData.records.every((record) => record.date === '2026-03-20')).toBe(true);
+  expect(recordsData.records.every((record) => record.type === 'income')).toBe(true);
+  expect(recordsData.records.every((record) => record.settlementStatus === 'unsettled')).toBe(true);
+
+  const monthlyResponse = await request.get('/api/agent/ad-records/monthly?accountId=acc_travel&year=2026', {
+    headers: {
+      Authorization: `Bearer ${LOCAL_AGENT_TOKEN}`,
+    },
+  });
+  expect(monthlyResponse.status()).toBe(200);
+  const monthlyData = (await monthlyResponse.json()) as {
+    year: number;
+    timezone: string;
+    months: Array<{ month: number; income: number; expense: number; settled: number; unsettled: number }>;
+    totals: { income: number; expense: number; settled: number; unsettled: number };
+    filters: { accountId: string | null };
+  };
+  expect(monthlyData.year).toBe(2026);
+  expect(monthlyData.timezone).toBe('Asia/Shanghai');
+  expect(monthlyData.filters).toEqual({
+    accountId: 'acc_travel',
+  });
+  const marchSummary = monthlyData.months.find((row) => row.month === 3);
+  expect(marchSummary).toBeDefined();
+  expect((marchSummary?.income ?? 0) >= 2600).toBe(true);
+  expect((marchSummary?.expense ?? 0) >= 420).toBe(true);
+  expect((marchSummary?.unsettled ?? 0) >= 2600).toBe(true);
+});
+
 test('agent api: invalid batch payload returns 422', async ({ request }) => {
   const response = await request.post('/api/agent/tasks/batch', {
     headers: buildAgentHeaders(uniqueName('agent-invalid')),
@@ -276,6 +425,33 @@ test('agent api: invalid batch payload returns 422', async ({ request }) => {
   };
   expect(data.error).toBe('Invalid request body');
   expect(data.issues.some((issue) => issue.path === 'tasks.0.title')).toBe(true);
+});
+
+test('agent api: invalid ad-record batch payload returns 422', async ({ request }) => {
+  const response = await request.post('/api/agent/ad-records/batch', {
+    headers: buildAgentHeaders(uniqueName('agent-record-invalid')),
+    data: {
+      source: 'openclaw',
+      timezone: 'Asia/Shanghai',
+      records: [
+        {
+          accountId: 'acc_travel',
+          title: '',
+          date: '2026-03-14',
+          type: 'cost',
+          amount: -10,
+        },
+      ],
+    },
+  });
+
+  expect(response.status()).toBe(422);
+  const data = (await response.json()) as {
+    error: string;
+    issues: Array<{ path: string; message: string }>;
+  };
+  expect(data.error).toBe('Invalid request body');
+  expect(data.issues.some((issue) => issue.path === 'records.0.title')).toBe(true);
 });
 
 test('agent api: page picks up agent-created tasks on focus refresh without full reload', async ({ page, request }) => {
@@ -309,4 +485,41 @@ test('agent api: page picks up agent-created tasks on focus refresh without full
   });
 
   await expect(page.getByText(taskName)).toBeVisible();
+});
+
+test('agent api: ads page picks up agent-created ad records on focus refresh without full reload', async ({ page, request }) => {
+  const recordTitle = uniqueName('Agent同步收入');
+
+  await gotoHome(page);
+  await page.getByTestId('tab-ads').click();
+  await expect(page.getByRole('heading', { name: '收益管理' })).toBeVisible();
+  await expect(page.getByText(recordTitle)).toHaveCount(0);
+
+  const response = await request.post('/api/agent/ad-records/batch', {
+    headers: buildAgentHeaders(uniqueName('agent-record-focus')),
+    data: {
+      source: 'openclaw',
+      timezone: 'Asia/Shanghai',
+      rawText: '给旅行主账号记一笔投放',
+      records: [
+        {
+          accountId: 'acc_travel',
+          title: recordTitle,
+          date: '2026-03-14',
+          note: 'Agent 自动录入',
+          type: 'income',
+          amount: 256,
+          settlementStatus: 'unsettled',
+        },
+      ],
+    },
+  });
+
+  expect(response.status()).toBe(201);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'));
+  });
+
+  await expect(page.getByText(recordTitle)).toBeVisible();
 });

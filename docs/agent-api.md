@@ -2,21 +2,21 @@
 
 ## 1. 目标
 
-这份文档定义当前仓库对外开放给 OpenClaw / skills / 其他 AI agent 的账号查询、任务查询和任务写入接口。
+这份文档定义当前仓库对外开放给 OpenClaw / skills / 其他 AI agent 的账号查询、任务查询、投放/收益查询，以及结构化写入接口。
 
 这层接口的定位不是替代网页端 CRUD，而是：
 
-- 让外部 AI 先查询账号和任务，再把自然语言解析后的结构化结果写入任务
+- 让外部 AI 先查询账号、任务和投放/收益，再把自然语言解析后的结构化结果写入任务或投放记录
 - 让网页端继续负责展示、提醒和手动修正
 - 把公网 Bearer token、幂等、防重和审计隔离在单独的 `agent` 命名空间下
 
 ## 2. 当前边界
 
-第一版已经锁定这些约束：
+当前版本已经锁定这些约束：
 
 - 开放 **账号查询 / 任务查询 / 任务创建**
+- 开放 **投放/收益查询 / 投放/收益创建**
 - 不自动创建账号
-- 不自动写 `ad_records`
 - 自然语言解析放在 **OpenClaw / skill** 侧，不放到 Worker
 - Worker 只接收结构化请求，不直接做 LLM 语义理解
 - 信息不完整时，由 skill 追问；Worker 不做“猜测式补全”
@@ -30,6 +30,9 @@
 - `GET /api/agent/tasks`
 - `GET /api/agent/tasks/today`
 - `POST /api/agent/tasks/batch`
+- `GET /api/agent/ad-records`
+- `GET /api/agent/ad-records/monthly`
+- `POST /api/agent/ad-records/batch`
 
 当前网页内部仍继续使用：
 
@@ -265,9 +268,96 @@ Authorization: Bearer <token>
 
 如果传了无效 timezone，会返回 `422`。
 
-## 9. 批量创建任务接口
+## 9. 投放/收益查询接口
 
 ### 9.1 请求
+
+```http
+GET /api/agent/ad-records?accountId=acc_travel&date=2026-03-14&type=expense&settlementStatus=settled&limit=20
+Authorization: Bearer <token>
+```
+
+支持的 query：
+
+- `accountId`：可选
+- `date`：可选，格式 `YYYY-MM-DD`
+- `type`：可选，`income / expense`
+- `settlementStatus`：可选，`settled / unsettled`
+- `limit`：可选，默认 `50`，最大 `100`
+
+### 9.2 返回示例
+
+```json
+{
+  "records": [
+    {
+      "id": "record_xxx",
+      "accountId": "acc_travel",
+      "title": "豆包广告投放",
+      "date": "2026-03-14",
+      "note": "先跑冷启动",
+      "type": "expense",
+      "amount": 300,
+      "settlementStatus": null,
+      "createdAt": "2026-03-14T08:00:00.000Z",
+      "updatedAt": "2026-03-14T08:00:00.000Z"
+    }
+  ],
+  "filters": {
+    "accountId": "acc_travel",
+    "date": "2026-03-14",
+    "type": "expense",
+    "settlementStatus": null,
+    "limit": 20
+  }
+}
+```
+
+## 10. 投放/收益月度汇总接口
+
+### 10.1 请求
+
+```http
+GET /api/agent/ad-records/monthly?accountId=acc_travel&year=2026&timezone=Asia/Shanghai
+Authorization: Bearer <token>
+```
+
+支持的 query：
+
+- `accountId`：可选
+- `year`：可选，默认取 `timezone` 下当前年份
+- `timezone`：可选，默认 `Asia/Shanghai`
+
+### 10.2 返回示例
+
+```json
+{
+  "year": 2026,
+  "timezone": "Asia/Shanghai",
+  "months": [
+    {
+      "month": 3,
+      "income": 2600,
+      "expense": 420,
+      "settled": 0,
+      "unsettled": 2600
+    }
+  ],
+  "totals": {
+    "income": 2600,
+    "expense": 420,
+    "settled": 0,
+    "unsettled": 2600
+  },
+  "filters": {
+    "accountId": "acc_travel"
+  }
+}
+```
+
+## 11. 批量创建任务接口
+
+### 11.1 请求
 
 ```http
 POST /api/agent/tasks/batch
@@ -293,7 +383,7 @@ Content-Type: application/json
 }
 ```
 
-### 9.2 校验规则
+### 11.2 校验规则
 
 - `Authorization` 必须存在
 - `Idempotency-Key` 必须存在
@@ -306,8 +396,9 @@ Content-Type: application/json
   - `date`：`YYYY-MM-DD`
   - `status`：`待拍 / 已拍 / 已发`
 - `location` 可省略；默认会补成 `AI录入`
+- 网页 UI 和 `mam-task` skill 会把这个语义称为“备注”；当前对外 payload 仍使用历史字段名 `location`
 
-### 9.3 返回示例
+### 11.3 返回示例
 
 首次成功创建：
 
@@ -339,7 +430,81 @@ Content-Type: application/json
 - 会直接返回第一次成功写入的同一份结果
 - HTTP 状态码为 `200`
 
-## 10. 幂等与审计
+## 12. 批量创建投放/收益接口
+
+### 12.1 请求
+
+```http
+POST /api/agent/ad-records/batch
+Authorization: Bearer <token>
+Idempotency-Key: <unique-key>
+Content-Type: application/json
+```
+
+```json
+{
+  "source": "openclaw",
+  "timezone": "Asia/Shanghai",
+  "rawText": "年轻朋友阿甜今天投了 300 元豆包广告",
+  "records": [
+    {
+      "accountId": "acc_travel",
+      "title": "豆包广告投放",
+      "date": "2026-03-14",
+      "note": "先跑冷启动",
+      "type": "expense",
+      "amount": 300
+    }
+  ]
+}
+```
+
+### 12.2 校验规则
+
+- `Authorization` 必须存在
+- `Idempotency-Key` 必须存在
+- `source` 必填
+- `timezone` 可选，默认 `Asia/Shanghai`
+- `records` 至少 1 条，最多 20 条
+- 每条记录必须带：
+  - `accountId`
+  - `title`
+  - `date`：`YYYY-MM-DD`
+  - `type`：`income / expense`
+  - `amount`：正数
+- `note` 可省略；默认写入空字符串
+- `settlementStatus` 仅对 `income` 有意义；`expense` 会被归一化为 `null`
+
+### 12.3 返回示例
+
+```json
+{
+  "requestId": "agentreq_xxx",
+  "created": [
+    {
+      "id": "record_xxx",
+      "accountId": "acc_travel",
+      "title": "豆包广告投放",
+      "date": "2026-03-14",
+      "note": "先跑冷启动",
+      "type": "expense",
+      "amount": 300,
+      "settlementStatus": null,
+      "createdAt": "2026-03-14T08:00:00.000Z",
+      "updatedAt": "2026-03-14T08:00:00.000Z"
+    }
+  ],
+  "skipped": []
+}
+```
+
+同一个 `Idempotency-Key` 重试：
+
+- 不会重复创建
+- 会直接返回第一次成功写入的同一份结果
+- HTTP 状态码为 `200`
+
+## 13. 幂等与审计
 
 当前实现新增了 D1 表：
 
@@ -368,7 +533,7 @@ Content-Type: application/json
 - 成功后重放会返回同一结果，不再新建任务
 - 如果同 key 之前失败，后续重试会返回 `409`
 
-## 11. 错误语义
+## 14. 错误语义
 
 当前约定：
 
@@ -392,20 +557,21 @@ Content-Type: application/json
 }
 ```
 
-## 12. 推荐的 skill 调用流程
+## 15. 推荐的 skill 调用流程
 
 OpenClaw / skill 推荐按这个顺序工作：
 
-1. 从用户自然语言抽取账号名、品牌名、动作和日期
+1. 从用户自然语言抽取账号名、品牌名、动作、日期、金额和备注
 2. 先调用 `GET /api/agent/accounts` 或 `GET /api/agent/accounts/resolve`
 3. 若返回 `not_found` 或 `ambiguous`，向用户追问，不要盲写
-4. 如需避免重复创建，可先调 `GET /api/agent/tasks` 或 `GET /api/agent/tasks/today`
+4. 如需避免重复创建，可先调 `GET /api/agent/tasks`、`GET /api/agent/tasks/today`、`GET /api/agent/ad-records`
 5. 把相对日期转成绝对日期 `YYYY-MM-DD`
-6. 组装 `tasks[]`
-7. 调 `POST /api/agent/tasks/batch`
-8. 回给用户“已创建几条任务”的确认
+6. 如果是任务，组装 `tasks[]`
+7. 如果是收入/投放，组装 `records[]`
+8. 调对应的 `batch` 写接口
+9. 回给用户“已创建几条任务/记录”的确认
 
-## 13. 第一版任务映射建议
+## 16. 当前 skill 映射建议
 
 当前建议的 skill 映射：
 
@@ -418,17 +584,26 @@ OpenClaw / skill 推荐按这个顺序工作：
   - `status = 待拍`
   - `date = 今天`
 - 只有明确表达“已经发了 / 已拍完 / 已经发布”时，才允许直接映射到 `已拍 / 已发`
+- “投放 / 花了 / 支出 / 投流 / Dou+”
+  - `type = expense`
+  - `amount = 用户明确给出的金额`
+- “收入 / 回款 / 结算 / 到账”
+  - `type = income`
+  - `amount = 用户明确给出的金额`
+  - 如果用户明确说“已结算”，再写 `settlementStatus = settled`
+  - 否则优先写 `settlementStatus = unsettled`
 
-## 14. 网页端配合行为
+## 17. 网页端配合行为
 
 为了让“AI 在别处写，网页负责展示”成立，当前网页已经补了两类自动刷新：
 
 - 页面 `focus` 时轻量刷新 `accounts + tasks`
 - 页面可见时每 `60s` 自动刷新一次 `accounts + tasks`
+- 进入 `Ads` 且已加载过记录后，页面 `focus` / `visibility` / `60s` 轮询也会轻量刷新 `ad_records`
 
 `Ads` 仍保持按需懒加载，不因为 agent API 而改成首屏全量请求。
 
-## 15. 测试现状
+## 18. 测试现状
 
 当前已落地的自动化覆盖：
 
@@ -438,14 +613,18 @@ OpenClaw / skill 推荐按这个顺序工作：
 - `tasks` 过滤查询
 - `tasks/today` 今日视图
 - `tasks/batch` 的批量创建和幂等重放
+- `ad-records` 过滤查询
+- `ad-records/monthly` 月度汇总
+- `ad-records/batch` 的批量创建和幂等重放
 - 非法请求体 `422`
 - 页面在不整页刷新的前提下，通过 `focus` 自动同步到 agent 创建的新任务
+- 页面在不整页刷新的前提下，通过 `focus` 自动同步到 agent 创建的新投放/收益记录
 
 相关用例：
 
 - [tests/e2e/agent-api.spec.ts](/Users/xiaohao-mini/Code/my-ai-web/tests/e2e/agent-api.spec.ts)
 
-## 16. OpenClaw Skill
+## 19. OpenClaw Skill
 
 仓库里已经放了一份 workspace skill：
 
@@ -459,20 +638,24 @@ OpenClaw / skill 推荐按这个顺序工作：
 这个名字的含义很直接：
 
 - `mam` 对应当前站点 `mam.midao.site`
-- `task` 表示它负责把结构化任务写入当前项目
+- `task` 表示它负责把结构化任务和运营记录写入当前项目
 
-### 16.1 它做什么
+### 19.1 它做什么
 
 - 支持直接查账号列表：`list-accounts`
 - 支持 resolve 账号：`resolve-account`
 - 支持查某账号某天任务：`list-tasks`
 - 支持查今天任务：`list-today`
+- 支持查投放/收益记录：`list-ad-records`
+- 支持查年内月度汇总：`list-ad-records-monthly`
 - 在 `create-batch` 前默认先查 `/api/agent/tasks` 做重复检查
+- 在 `create-ad-records-batch` 前默认先查 `/api/agent/ad-records` 做重复检查
 - 只把真正需要新建的任务提交到 `/api/agent/tasks/batch`
+- 只把真正需要新建的投放/收益记录提交到 `/api/agent/ad-records/batch`
 - 默认把原始自然语言放进 `rawText`
-- 默认把幂等 key 收敛在脚本层，避免 agent 重试时重复建任务
+- 默认把幂等 key 收敛在脚本层，避免 agent 重试时重复建任务或记录
 
-### 16.2 OpenClaw 配置建议
+### 19.2 OpenClaw 配置建议
 
 按 OpenClaw 当前文档，workspace 下的 `skills/` 目录会被自动发现；技能环境变量可以通过 `openclaw.json` 里的 `skills.entries.<skillKey>.env` 注入。
 

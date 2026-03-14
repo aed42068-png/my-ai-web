@@ -68,6 +68,7 @@
 - 记录支持新增、编辑、删除
 - 收入记录支持快速切换 `已结算 / 未结算`
 - 记录筛选、月份切换都已闭环
+- 进入 `Ads` 后，如果记录已经加载过，页面会在 `focus / visibility / 60s` 下自动轻量刷新 ad records，适合 agent 在别处记账后回来看
 - 账号封面编辑已接入同一套上传逻辑
 - 页面带首次使用引导卡，并支持关闭持久化
 - 顶部 header 已压缩，避免过高占屏
@@ -83,8 +84,9 @@
 - `[object Object]` 类错误文案已被修复为可读错误
 - 移动端顶部和底部导航高度已压缩
 - 新增 agent-facing API：外部 AI 可以查询账号/任务，并通过 Bearer token + `Idempotency-Key` 批量创建任务
+- agent-facing API 已扩展到投放/收益记录：外部 AI 可以查询 ad records、读取月度汇总，并批量写入收入/投放金额
 - agent 请求会写入 `agent_requests` 审计表，用于幂等、防重和回放
-- 仓库内已经补了一份可直接给 OpenClaw / workspace skills 使用的 `mam-task` skill 模板，并支持任务查询与写入前重复检查
+- 仓库内已经补了一份可直接给 OpenClaw / workspace skills 使用的 `mam-task` skill 模板，并支持任务、投放/收益查询与写入前重复检查
 
 ## 3. 当前线上资源
 
@@ -99,7 +101,7 @@
 
 ### 4.1 本地自动化
 
-当前 E2E 自动化共 `14` 条用例，分布在：
+当前 E2E 自动化共 `18` 条用例，分布在：
 
 - `tests/e2e/agent-api.spec.ts`
 - `tests/e2e/home.spec.ts`
@@ -112,17 +114,20 @@
 
 - 日期：`2026-03-14`
 - 命令：`npm run e2e`
-- 结果：`14 passed`
-- 总耗时：约 `28.7s`
+- 结果：`18 passed`
+- 总耗时：约 `25.7s`
 - 默认设备：Playwright `iPhone 12 Pro` 移动端模拟（运行在 Chromium）
 
 新增覆盖：
 
 - agent token 缺失 / 非法
 - agent 账号列表与任务查询
+- agent 投放/收益列表与月度汇总查询
 - agent 账号解析 `exact / not_found / ambiguous`
 - agent 批量创建任务与 `Idempotency-Key` 回放
+- agent 批量创建投放/收益记录与 `Idempotency-Key` 回放
 - 页面通过 `focus` 自动同步到 agent 新建任务
+- 页面通过 `focus` 自动同步到 agent 新建投放/收益记录
 
 ### 4.2 线上烟测
 

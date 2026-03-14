@@ -60,6 +60,24 @@ try {
     process.exit(0);
   }
 
+  if (command === 'list-ad-records') {
+    const response = await agentRequest(buildAdRecordListPath('/api/agent/ad-records'), {
+      headers: buildAuthHeaders(),
+    });
+
+    process.stdout.write(`${JSON.stringify(response, null, 2)}\n`);
+    process.exit(0);
+  }
+
+  if (command === 'list-ad-records-monthly') {
+    const response = await agentRequest(buildAdRecordMonthlyPath('/api/agent/ad-records/monthly'), {
+      headers: buildAuthHeaders(),
+    });
+
+    process.stdout.write(`${JSON.stringify(response, null, 2)}\n`);
+    process.exit(0);
+  }
+
   if (command === 'check-batch' || command === 'create-batch') {
     const idempotencyKey = readOption('--idempotency-key');
     const allowDuplicates = hasFlag('--allow-duplicates');
@@ -76,7 +94,7 @@ try {
       exitWithError('stdin must be valid JSON');
     }
 
-    const batchPayload = assertBatchPayload(payload);
+    const batchPayload = assertTaskBatchPayload(payload);
     const duplicateCheck = allowDuplicates ? buildNoopDuplicateCheck(batchPayload) : await inspectBatchDuplicates(batchPayload);
 
     if (dryRun) {
@@ -117,6 +135,90 @@ try {
     };
     const effectiveIdempotencyKey = idempotencyKey || buildIdempotencyKey(JSON.stringify(effectivePayload));
     const response = await agentRequest('/api/agent/tasks/batch', {
+      method: 'POST',
+      headers: {
+        ...buildAuthHeaders(),
+        'Content-Type': 'application/json',
+        'Idempotency-Key': effectiveIdempotencyKey,
+      },
+      body: JSON.stringify(effectivePayload),
+    });
+
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          dryRun: false,
+          idempotencyKey: effectiveIdempotencyKey,
+          duplicateCheck,
+          skipped: duplicateCheck.duplicates,
+          ...response,
+        },
+        null,
+        2
+      )}\n`
+    );
+    process.exit(0);
+  }
+
+  if (command === 'check-ad-records-batch' || command === 'create-ad-records-batch') {
+    const idempotencyKey = readOption('--idempotency-key');
+    const allowDuplicates = hasFlag('--allow-duplicates');
+    const dryRun = command === 'check-ad-records-batch' || hasFlag('--dry-run');
+    const rawPayload = await readStdin();
+    if (!rawPayload.trim()) {
+      exitWithError(`${command} expects a JSON payload on stdin`);
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(rawPayload);
+    } catch {
+      exitWithError('stdin must be valid JSON');
+    }
+
+    const batchPayload = assertAdRecordBatchPayload(payload);
+    const duplicateCheck = allowDuplicates
+      ? buildNoopAdRecordDuplicateCheck(batchPayload)
+      : await inspectAdRecordBatchDuplicates(batchPayload);
+
+    if (dryRun) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            dryRun: true,
+            duplicateCheck,
+          },
+          null,
+          2
+        )}\n`
+      );
+      process.exit(0);
+    }
+
+    if (!duplicateCheck.toCreate.length) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            dryRun: false,
+            idempotencyKey: null,
+            requestId: null,
+            created: [],
+            skipped: duplicateCheck.duplicates,
+            duplicateCheck,
+          },
+          null,
+          2
+        )}\n`
+      );
+      process.exit(0);
+    }
+
+    const effectivePayload = {
+      ...batchPayload,
+      records: duplicateCheck.toCreate.map(({ record }) => record),
+    };
+    const effectiveIdempotencyKey = idempotencyKey || buildIdempotencyKey(JSON.stringify(effectivePayload));
+    const response = await agentRequest('/api/agent/ad-records/batch', {
       method: 'POST',
       headers: {
         ...buildAuthHeaders(),
@@ -194,6 +296,26 @@ function buildTodayTaskPath(basePath) {
   appendOption(query, 'status', readOption('--status'));
   appendOption(query, 'timezone', readOption('--timezone'));
   appendOption(query, 'limit', readOption('--limit'));
+  const suffix = query.toString();
+  return suffix ? `${basePath}?${suffix}` : basePath;
+}
+
+function buildAdRecordListPath(basePath) {
+  const query = new URLSearchParams();
+  appendOption(query, 'accountId', readOption('--account-id'));
+  appendOption(query, 'date', readOption('--date'));
+  appendOption(query, 'type', readOption('--type'));
+  appendOption(query, 'settlementStatus', readOption('--settlement-status'));
+  appendOption(query, 'limit', readOption('--limit'));
+  const suffix = query.toString();
+  return suffix ? `${basePath}?${suffix}` : basePath;
+}
+
+function buildAdRecordMonthlyPath(basePath) {
+  const query = new URLSearchParams();
+  appendOption(query, 'accountId', readOption('--account-id'));
+  appendOption(query, 'year', readOption('--year'));
+  appendOption(query, 'timezone', readOption('--timezone'));
   const suffix = query.toString();
   return suffix ? `${basePath}?${suffix}` : basePath;
 }
@@ -334,7 +456,76 @@ function buildNoopDuplicateCheck(batchPayload) {
   };
 }
 
-function assertBatchPayload(payload) {
+async function inspectAdRecordBatchDuplicates(batchPayload) {
+  const groupedRecords = new Map();
+  for (const [index, record] of batchPayload.records.entries()) {
+    const groupKey = `${record.accountId}__${record.date}`;
+    const group = groupedRecords.get(groupKey) || [];
+    group.push({ index, record });
+    groupedRecords.set(groupKey, group);
+  }
+
+  const duplicateEntries = [];
+  const toCreate = [];
+
+  for (const [groupKey, entries] of groupedRecords.entries()) {
+    const [accountId, date] = groupKey.split('__');
+    const path = `/api/agent/ad-records?accountId=${encodeURIComponent(accountId)}&date=${encodeURIComponent(date)}&limit=100`;
+    const response = await agentRequest(path, {
+      headers: buildAuthHeaders(),
+    });
+    const existingRecords = Array.isArray(response?.records) ? response.records : [];
+
+    const seenKeys = new Map();
+    for (const record of existingRecords) {
+      seenKeys.set(buildAdRecordDedupKey(record), record);
+    }
+
+    for (const entry of entries) {
+      const dedupKey = buildAdRecordDedupKey(entry.record);
+      const matchedRecord = seenKeys.get(dedupKey);
+      if (matchedRecord) {
+        duplicateEntries.push({
+          index: entry.index,
+          reason: 'Duplicate ad record already exists on the same account and date',
+          record: entry.record,
+          existingRecord: {
+            id: matchedRecord.id,
+            title: matchedRecord.title,
+            date: matchedRecord.date,
+            type: matchedRecord.type,
+            amount: matchedRecord.amount,
+            accountId: matchedRecord.accountId,
+          },
+        });
+        continue;
+      }
+
+      toCreate.push(entry);
+      seenKeys.set(dedupKey, entry.record);
+    }
+  }
+
+  return {
+    inputCount: batchPayload.records.length,
+    submittedCount: toCreate.length,
+    duplicateCount: duplicateEntries.length,
+    toCreate,
+    duplicates: duplicateEntries,
+  };
+}
+
+function buildNoopAdRecordDuplicateCheck(batchPayload) {
+  return {
+    inputCount: batchPayload.records.length,
+    submittedCount: batchPayload.records.length,
+    duplicateCount: 0,
+    toCreate: batchPayload.records.map((record, index) => ({ index, record })),
+    duplicates: [],
+  };
+}
+
+function assertTaskBatchPayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     exitWithError('batch payload must be a JSON object');
   }
@@ -346,12 +537,31 @@ function assertBatchPayload(payload) {
   return payload;
 }
 
+function assertAdRecordBatchPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    exitWithError('batch payload must be a JSON object');
+  }
+
+  if (!Array.isArray(payload.records)) {
+    exitWithError('batch payload must include a records array');
+  }
+
+  return payload;
+}
+
 function normalizeTaskTitle(value) {
   return String(value || '')
     .normalize('NFKC')
     .trim()
     .replace(/\s+/g, ' ')
     .toLowerCase();
+}
+
+function buildAdRecordDedupKey(record) {
+  const normalizedTitle = normalizeTaskTitle(record.title);
+  const normalizedType = String(record.type || '').trim().toLowerCase();
+  const normalizedAmount = Number(record.amount || 0).toFixed(2);
+  return `${normalizedTitle}__${normalizedType}__${normalizedAmount}`;
 }
 
 async function readStdin() {
@@ -370,8 +580,12 @@ Commands:
   resolve-account "<account name>"
   list-tasks [--account-id "<id>"] [--date "YYYY-MM-DD"] [--status "待拍"] [--limit "20"]
   list-today [--account-id "<id>"] [--status "待拍"] [--timezone "Asia/Shanghai"] [--limit "20"]
+  list-ad-records [--account-id "<id>"] [--date "YYYY-MM-DD"] [--type "income"] [--settlement-status "settled"] [--limit "20"]
+  list-ad-records-monthly [--account-id "<id>"] [--year "2026"] [--timezone "Asia/Shanghai"]
   check-batch < payload.json
   create-batch [--idempotency-key "<key>"] [--allow-duplicates] [--dry-run] < payload.json
+  check-ad-records-batch < payload.json
+  create-ad-records-batch [--idempotency-key "<key>"] [--allow-duplicates] [--dry-run] < payload.json
 
 Environment:
   MAM_AGENT_API_BASE_URL   Default: https://mam.midao.site

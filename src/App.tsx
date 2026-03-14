@@ -88,6 +88,8 @@ export default function App() {
   const didRequestAdRecordsRef = useRef(false);
   const bootstrapRefreshInFlightRef = useRef(false);
   const lastBootstrapRefreshAtRef = useRef(0);
+  const recordsRefreshInFlightRef = useRef(false);
+  const lastRecordsRefreshAtRef = useRef(0);
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -197,6 +199,18 @@ export default function App() {
     void loadInitialData({ background: true });
   });
 
+  const triggerRecordsRefresh = useEffectEvent(({ force = false }: { force?: boolean } = {}) => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+
+    if (activeTab !== 'ads' || !didRequestAdRecordsRef.current) {
+      return;
+    }
+
+    void loadAdRecords({ background: true, force });
+  });
+
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
       return;
@@ -204,17 +218,20 @@ export default function App() {
 
     const handleFocus = () => {
       triggerBootstrapRefresh();
+      triggerRecordsRefresh({ force: true });
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         triggerBootstrapRefresh();
+        triggerRecordsRefresh({ force: true });
       }
     };
 
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
         triggerBootstrapRefresh();
+        triggerRecordsRefresh();
       }
     }, AUTO_REFRESH_INTERVAL_MS);
 
@@ -228,7 +245,27 @@ export default function App() {
     };
   }, []);
 
-  const loadAdRecords = async ({ background = false }: { background?: boolean } = {}) => {
+  const loadAdRecords = async ({
+    background = false,
+    force = false,
+  }: {
+    background?: boolean;
+    force?: boolean;
+  } = {}) => {
+    if (background) {
+      const now = Date.now();
+      if (recordsRefreshInFlightRef.current) {
+        return;
+      }
+
+      if (!force && now - lastRecordsRefreshAtRef.current < AUTO_REFRESH_MIN_GAP_MS) {
+        return;
+      }
+
+      recordsRefreshInFlightRef.current = true;
+      lastRecordsRefreshAtRef.current = now;
+    }
+
     setRecordsStatus('loading');
     if (!background) {
       setRecordsErrorMessage('');
@@ -243,6 +280,10 @@ export default function App() {
     } catch (error) {
       setRecordsErrorMessage(error instanceof Error ? error.message : '加载收益记录失败');
       setRecordsStatus('error');
+    } finally {
+      if (background) {
+        recordsRefreshInFlightRef.current = false;
+      }
     }
   };
 
