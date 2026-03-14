@@ -88,6 +88,13 @@ Pages 并不是不能做，而是更适合：
 
 当前实现放在 [worker/index.ts](/Users/xiaohao-mini/Code/my-ai-web/worker/index.ts)。
 
+当前对外 AI 接入也复用了这套 Hono 路由能力：
+
+- `/api/agent/accounts/resolve`
+- `/api/agent/tasks/batch`
+
+这组接口需要 Bearer token、`Idempotency-Key`、统一错误格式和审计落库；如果不用路由/中间件抽象，维护成本会更高。
+
 ## 4. 系统结构
 
 ```mermaid
@@ -128,8 +135,16 @@ flowchart LR
   - R2 文件元数据
   - object key / mime / size / purpose
   - owner_entity_type / owner_entity_id
+- `agent_requests`
+  - 外部 agent 请求审计
+  - `idempotency_key`
+  - 请求体 / 返回体
+  - `processing / succeeded / failed`
 
-具体 schema 在 [migrations/0001_init.sql](/Users/xiaohao-mini/Code/my-ai-web/migrations/0001_init.sql)。
+具体 schema 在：
+
+- [migrations/0001_init.sql](/Users/xiaohao-mini/Code/my-ai-web/migrations/0001_init.sql)
+- [migrations/0002_agent_requests.sql](/Users/xiaohao-mini/Code/my-ai-web/migrations/0002_agent_requests.sql)
 
 ## 5. 上传设计
 
@@ -198,6 +213,7 @@ flowchart LR
 - 三个页面都消费同一份真实数据
 - 任务、账号、收入记录通过 mutation 更新后端
 - 账号封面只把 `createObjectURL` 用在上传前预览，不再作为持久地址
+- `accounts / tasks` 在页面 `focus`、可见性恢复和 60 秒可见态间隔下会静默刷新，适合外部 AI 在别处写任务后回到网页查看
 
 入口在 [src/App.tsx](/Users/xiaohao-mini/Code/my-ai-web/src/App.tsx)。
 
@@ -255,8 +271,24 @@ flowchart LR
 - `secret`
   - 敏感
   - 例如 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`
+  - `AGENT_API_TOKEN`
 
 本地用 `.dev.vars`，线上用 `wrangler secret put`。
+
+## 8. 外部 AI 接入层
+
+当前项目已经有一层单独的 agent-facing API，用来承接 OpenClaw / skills 的只读查询和结构化写入：
+
+- skill 负责自然语言解析、日期换算、追问补全
+- Worker 只做结构化校验、账号解析、鉴权、幂等和审计
+- 网页端继续是展示与提醒层
+
+这样做的理由：
+
+- 不把浏览器用的 `/api/tasks` 直接暴露给公网 AI
+- 不把 LLM 解析逻辑塞进 Worker
+- 幂等和审计可以单独演进
+- 后续若要加 `/api/agent/commands/ingest`，可以继续复用同一套写入服务
 
 另一个需要明确的边界是构建产物：
 

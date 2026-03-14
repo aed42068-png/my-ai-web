@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import Layout from './components/Layout';
 import Archive from './pages/Archive';
 import Ads from './pages/Ads';
@@ -33,6 +33,8 @@ type BootstrapCacheState = {
 const BOOTSTRAP_CACHE_VERSION = 2;
 const BOOTSTRAP_CACHE_TTL_MS = 15 * 60 * 1000;
 const BOOTSTRAP_CACHE_KEY = `my-ai-web:bootstrap:v${BOOTSTRAP_CACHE_VERSION}`;
+const AUTO_REFRESH_INTERVAL_MS = 60_000;
+const AUTO_REFRESH_MIN_GAP_MS = 5_000;
 
 const sortAccounts = (items: Account[]) =>
   [...items].sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt.localeCompare(right.createdAt));
@@ -84,6 +86,8 @@ export default function App() {
   const toastTimerRef = useRef<number | null>(null);
   const didLoadInitialDataRef = useRef(false);
   const didRequestAdRecordsRef = useRef(false);
+  const bootstrapRefreshInFlightRef = useRef(false);
+  const lastBootstrapRefreshAtRef = useRef(0);
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -119,7 +123,27 @@ export default function App() {
     });
   }, [accounts, tasks, records, lastSyncAt]);
 
-  const loadInitialData = async ({ background = false }: { background?: boolean } = {}) => {
+  const loadInitialData = async ({
+    background = false,
+    force = false,
+  }: {
+    background?: boolean;
+    force?: boolean;
+  } = {}) => {
+    if (background) {
+      const now = Date.now();
+      if (bootstrapRefreshInFlightRef.current) {
+        return;
+      }
+
+      if (!force && now - lastBootstrapRefreshAtRef.current < AUTO_REFRESH_MIN_GAP_MS) {
+        return;
+      }
+
+      bootstrapRefreshInFlightRef.current = true;
+      lastBootstrapRefreshAtRef.current = now;
+    }
+
     if (background) {
       setIsRefreshing(true);
       setSyncIssue('');
@@ -144,6 +168,7 @@ export default function App() {
       }
     } finally {
       if (background) {
+        bootstrapRefreshInFlightRef.current = false;
         setIsRefreshing(false);
       } else {
         setIsLoading(false);
@@ -157,8 +182,51 @@ export default function App() {
     }
 
     didLoadInitialDataRef.current = true;
-    void loadInitialData({ background: Boolean(bootstrapCache) });
+    void loadInitialData({ background: Boolean(bootstrapCache), force: Boolean(bootstrapCache) });
   }, [bootstrapCache]);
+
+  const triggerBootstrapRefresh = useEffectEvent(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+
+    if (isLoading) {
+      return;
+    }
+
+    void loadInitialData({ background: true });
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+
+    const handleFocus = () => {
+      triggerBootstrapRefresh();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        triggerBootstrapRefresh();
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        triggerBootstrapRefresh();
+      }
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const loadAdRecords = async ({ background = false }: { background?: boolean } = {}) => {
     setRecordsStatus('loading');

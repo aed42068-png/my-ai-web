@@ -1,13 +1,23 @@
 import { AwsClient } from 'aws4fetch';
 import { zValidator } from '@hono/zod-validator';
-import { Hono } from 'hono';
+import { Context, Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import type {
   Account,
+  AgentAccountListResponse,
+  AgentAccountResolveResponse,
+  AgentResolvedAccount,
+  AgentTaskBatchInput,
+  AgentTaskBatchResponse,
+  AgentTaskListResponse,
+  AgentTaskQueryFilters,
+  AgentTaskTodayResponse,
   AdRecord,
   Asset,
   HitStatus,
   Task,
+  TaskInput,
   TaskStatus,
 } from '../src/types';
 
@@ -20,6 +30,7 @@ type AppBindings = {
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
   R2_PUBLIC_BASE_URL?: string;
+  AGENT_API_TOKEN?: string;
 };
 
 type AppContext = {
@@ -77,6 +88,17 @@ type AssetRow = {
   created_at: string;
 };
 
+type AgentRequestRow = {
+  id: string;
+  source: string;
+  idempotency_key: string;
+  raw_text: string | null;
+  request_body: string;
+  result_body: string | null;
+  status: string;
+  created_at: string;
+};
+
 const taskStatusSchema = z.enum(['已拍', '待拍', '已发']);
 const hitStatusSchema = z.enum(['爆款', '小爆款']).nullable();
 const recordTypeSchema = z.enum(['income', 'expense']);
@@ -125,6 +147,36 @@ const adRecordPatchSchema = adRecordSchema.partial().refine(
 );
 
 const uploadPurposeSchema = z.enum(['account-cover']);
+const agentResolveQuerySchema = z.object({
+  q: z.string().trim().min(1).max(80),
+});
+const agentTaskListQuerySchema = z.object({
+  accountId: z.string().trim().min(1).optional(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  status: taskStatusSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const agentTaskTodayQuerySchema = z.object({
+  accountId: z.string().trim().min(1).optional(),
+  status: taskStatusSchema.optional(),
+  timezone: z.string().trim().min(1).max(60).default('Asia/Shanghai'),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const agentTaskItemSchema = z.object({
+  accountId: z.string().trim().min(1),
+  title: z.string().trim().min(1).max(160),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: taskStatusSchema,
+  location: z.string().trim().max(80).optional(),
+});
+const agentTaskBatchSchema = z.object({
+  source: z.string().trim().min(1).max(40),
+  timezone: z.string().trim().min(1).max(60).default('Asia/Shanghai'),
+  rawText: z.string().trim().max(4000).optional(),
+  tasks: z.array(agentTaskItemSchema).min(1).max(20),
+});
+const LOCAL_AGENT_TEST_TOKEN = 'dev-agent-token';
+const DEFAULT_AGENT_TASK_LOCATION = 'AI录入';
 
 const uploadSignSchema = z.object({
   filename: z.string().trim().min(1).max(240),
@@ -148,19 +200,199 @@ const app = new Hono<AppContext>();
 
 app.onError((error, c) => {
   console.error(error);
+  if (error instanceof HTTPException) {
+    return c.json({ error: error.message }, error.status);
+  }
   return c.json({ error: error.message || 'Internal Server Error' }, 500);
+});
+
+function getAcceptedAgentTokens(env: AppBindings, hostname: string): string[] {
+  const tokens = [env.AGENT_API_TOKEN?.trim()].filter(Boolean) as string[];
+
+  if (isLocalDevelopmentHost(hostname)) {
+    tokens.push(LOCAL_AGENT_TEST_TOKEN);
+  }
+
+  return [...new Set(tokens)];
+}
+
+function isLocalDevelopmentHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname === '[::1]' ||
+    hostname.endsWith('.local')
+  );
+}
+
+app.use('/api/agent/*', async (c, next) => {
+  const authHeader = c.req.header('authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return c.json({ error: 'Missing Bearer token' }, 401);
+  }
+
+  const token = authHeader.slice('Bearer '.length).trim();
+  const acceptedTokens = getAcceptedAgentTokens(c.env, new URL(c.req.url).hostname);
+  if (!acceptedTokens.length) {
+    return c.json({ error: 'Agent API token is not configured' }, 500);
+  }
+
+  if (!acceptedTokens.includes(token)) {
+    return c.json({ error: 'Invalid agent token' }, 403);
+  }
+
+  await next();
 });
 
 app.get('/api/health', (c) => c.json({ ok: true }));
 
-app.get('/api/accounts', async (c) => {
-  const result = await c.env.DB.prepare(
-    `SELECT id, name, cover_asset_id, cover_image_url, cover_offset_y, sort_order, created_at, updated_at
-     FROM accounts
-     ORDER BY sort_order ASC, created_at ASC`
-  ).all<AccountRow>();
+app.get('/api/agent/accounts', async (c) => {
+  const accounts = await listAgentAccounts(c.env.DB);
+  return c.json({
+    accounts,
+  } satisfies AgentAccountListResponse);
+});
 
-  return c.json(result.results.map(mapAccount));
+app.get('/api/agent/accounts/resolve', async (c) => {
+  const parsed = agentResolveQuerySchema.safeParse({
+    q: c.req.query('q'),
+  });
+
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Invalid query',
+        issues: parsed.error.issues.map(({ path, message }) => ({
+          path: path.join('.'),
+          message,
+        })),
+      },
+      422
+    );
+  }
+
+  const normalizedQuery = normalizeAccountName(parsed.data.q);
+  const accounts = await listResolvableAccounts(c.env.DB);
+  const matches = accounts.filter((account) => normalizeAccountName(account.name) === normalizedQuery);
+
+  if (!matches.length) {
+    return c.json({
+      match: 'not_found',
+      candidates: [],
+    } satisfies AgentAccountResolveResponse);
+  }
+
+  if (matches.length === 1) {
+    return c.json({
+      match: 'exact',
+      account: matches[0],
+    } satisfies AgentAccountResolveResponse);
+  }
+
+  return c.json({
+    match: 'ambiguous',
+    candidates: matches,
+  } satisfies AgentAccountResolveResponse);
+});
+
+app.get('/api/agent/tasks', async (c) => {
+  const parsed = agentTaskListQuerySchema.safeParse({
+    accountId: c.req.query('accountId'),
+    date: c.req.query('date'),
+    status: c.req.query('status'),
+    limit: c.req.query('limit'),
+  });
+
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Invalid query',
+        issues: parsed.error.issues.map(({ path, message }) => ({
+          path: path.join('.'),
+          message,
+        })),
+      },
+      422
+    );
+  }
+
+  const filters: AgentTaskQueryFilters = {
+    accountId: parsed.data.accountId ?? null,
+    date: parsed.data.date ?? null,
+    status: parsed.data.status ?? null,
+    limit: parsed.data.limit,
+  };
+
+  const tasks = await listTasks(c.env.DB, filters);
+  return c.json({
+    tasks,
+    filters,
+  } satisfies AgentTaskListResponse);
+});
+
+app.get('/api/agent/tasks/today', async (c) => {
+  const parsed = agentTaskTodayQuerySchema.safeParse({
+    accountId: c.req.query('accountId'),
+    status: c.req.query('status'),
+    timezone: c.req.query('timezone'),
+    limit: c.req.query('limit'),
+  });
+
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Invalid query',
+        issues: parsed.error.issues.map(({ path, message }) => ({
+          path: path.join('.'),
+          message,
+        })),
+      },
+      422
+    );
+  }
+
+  let today: string;
+  try {
+    today = getDateInTimeZone(parsed.data.timezone);
+  } catch {
+    return c.json(
+      {
+        error: 'Invalid query',
+        issues: [
+          {
+            path: 'timezone',
+            message: 'Invalid timezone',
+          },
+        ],
+      },
+      422
+    );
+  }
+
+  const filters: AgentTaskQueryFilters = {
+    accountId: parsed.data.accountId ?? null,
+    date: today,
+    status: parsed.data.status ?? null,
+    limit: parsed.data.limit,
+  };
+
+  const tasks = await listTasks(c.env.DB, filters);
+  return c.json({
+    date: today,
+    timezone: parsed.data.timezone,
+    tasks,
+    filters: {
+      accountId: filters.accountId,
+      status: filters.status,
+      limit: filters.limit,
+    },
+  } satisfies AgentTaskTodayResponse);
+});
+
+app.get('/api/accounts', async (c) => {
+  const accounts = await listAccounts(c.env.DB);
+  return c.json(accounts);
 });
 
 app.post('/api/accounts', zValidator('json', accountSchema), async (c) => {
@@ -240,28 +472,8 @@ app.patch('/api/accounts/:id', zValidator('json', accountSchema.partial()), asyn
 });
 
 app.get('/api/tasks', async (c) => {
-  const result = await c.env.DB.prepare(
-    `SELECT
-        tasks.id,
-        tasks.account_id,
-        tasks.title,
-        tasks.date,
-        tasks.location,
-        tasks.status,
-        tasks.sort_order,
-        task_reviews.hit_status,
-        task_reviews.review_data,
-        tasks.created_at,
-        tasks.updated_at
-     FROM tasks
-     LEFT JOIN task_reviews ON task_reviews.task_id = tasks.id
-     ORDER BY tasks.date DESC,
-              CASE tasks.status WHEN '待拍' THEN 0 WHEN '已拍' THEN 1 ELSE 2 END,
-              tasks.sort_order ASC,
-              tasks.created_at DESC`
-  ).all<TaskRow>();
-
-  return c.json(result.results.map(mapTask));
+  const tasks = await listTasks(c.env.DB);
+  return c.json(tasks);
 });
 
 app.post('/api/tasks', zValidator('json', taskSchema), async (c) => {
@@ -271,35 +483,8 @@ app.post('/api/tasks', zValidator('json', taskSchema), async (c) => {
     return c.json({ error: 'Account not found' }, 404);
   }
 
-  const id = createId('task');
-  const now = nowIso();
-  const sortOrder =
-    input.sortOrder ??
-    (await nextSortOrder(c.env.DB, 'tasks', `WHERE account_id = ? AND status = ?`, [input.accountId, input.status]));
-
-  await c.env.DB.prepare(
-    `INSERT INTO tasks (id, account_id, title, date, location, status, sort_order, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(id, input.accountId, input.title, input.date, input.location, input.status, sortOrder, now, now)
-    .run();
-
-  return c.json(
-    {
-      id,
-      accountId: input.accountId,
-      title: input.title,
-      date: input.date,
-      location: input.location,
-      status: input.status,
-      sortOrder,
-      hitStatus: null,
-      reviewData: '',
-      createdAt: now,
-      updatedAt: now,
-    } satisfies Task,
-    201
-  );
+  const created = await createTaskRecord(c.env.DB, input);
+  return c.json(created, 201);
 });
 
 app.patch('/api/tasks/:id', zValidator('json', taskPatchSchema), async (c) => {
@@ -389,6 +574,91 @@ app.post('/api/tasks/:id/review', zValidator('json', reviewSchema), async (c) =>
     hitStatus: input.hitStatus,
     reviewData: input.reviewData,
   } satisfies Task);
+});
+
+app.post('/api/agent/tasks/batch', async (c) => {
+  const idempotencyKey = c.req.header('idempotency-key')?.trim();
+  if (!idempotencyKey) {
+    return c.json({ error: 'Idempotency-Key header is required' }, 400);
+  }
+
+  const rawBody = await c.req.text();
+  if (!rawBody.trim()) {
+    return c.json({ error: 'Request body is required' }, 422);
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 422);
+  }
+
+  const parsed = agentTaskBatchSchema.safeParse(payload);
+  if (!parsed.success) {
+    return c.json(
+      {
+        error: 'Invalid request body',
+        issues: parsed.error.issues.map(({ path, message }) => ({
+          path: path.join('.'),
+          message,
+        })),
+      },
+      422
+    );
+  }
+
+  const input: AgentTaskBatchInput = parsed.data;
+  const reserved = await reserveAgentRequest(c.env.DB, {
+    id: createId('agentreq'),
+    source: input.source,
+    idempotencyKey,
+    rawText: input.rawText ?? null,
+    requestBody: JSON.stringify(input),
+  });
+
+  if (reserved.status === 'existing') {
+    return replayAgentRequest(c, reserved.row);
+  }
+
+  const requestId = reserved.row.id;
+
+  try {
+    const accountIssues = await findMissingTaskAccountIssues(c.env.DB, input.tasks);
+    if (accountIssues.length) {
+      const payload = {
+        error: 'Invalid request body',
+        issues: accountIssues,
+      };
+      await finalizeAgentRequest(c.env.DB, requestId, 'failed', payload);
+      return c.json(payload, 422);
+    }
+
+    const created: Task[] = [];
+    for (const taskInput of input.tasks) {
+      created.push(
+        await createTaskRecord(c.env.DB, {
+          ...taskInput,
+          location: taskInput.location?.trim() || DEFAULT_AGENT_TASK_LOCATION,
+        })
+      );
+    }
+
+    const response = {
+      requestId,
+      created,
+      skipped: [],
+    } satisfies AgentTaskBatchResponse;
+
+    await finalizeAgentRequest(c.env.DB, requestId, 'succeeded', response);
+    return c.json(response, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create agent tasks';
+    await finalizeAgentRequest(c.env.DB, requestId, 'failed', {
+      error: message,
+    });
+    throw error;
+  }
 });
 
 app.get('/api/ad-records', async (c) => {
@@ -636,6 +906,44 @@ async function getAccountById(db: D1Database, id: string): Promise<Account | nul
   return result ? mapAccount(result) : null;
 }
 
+async function listResolvableAccounts(db: D1Database): Promise<AgentResolvedAccount[]> {
+  const result = await db.prepare(
+    `SELECT id, name
+     FROM accounts
+     ORDER BY sort_order ASC, created_at ASC`
+  ).all<Pick<AccountRow, 'id' | 'name'>>();
+
+  return result.results.map((row) => ({
+    id: row.id,
+    name: row.name,
+  }));
+}
+
+async function listAccounts(db: D1Database): Promise<Account[]> {
+  const result = await db.prepare(
+    `SELECT id, name, cover_asset_id, cover_image_url, cover_offset_y, sort_order, created_at, updated_at
+     FROM accounts
+     ORDER BY sort_order ASC, created_at ASC`
+  ).all<AccountRow>();
+
+  return result.results.map(mapAccount);
+}
+
+async function listAgentAccounts(db: D1Database): Promise<AgentAccountListResponse['accounts']> {
+  const result = await db.prepare(
+    `SELECT id, name, sort_order, updated_at
+     FROM accounts
+     ORDER BY sort_order ASC, created_at ASC`
+  ).all<Pick<AccountRow, 'id' | 'name' | 'sort_order' | 'updated_at'>>();
+
+  return result.results.map((row) => ({
+    id: row.id,
+    name: row.name,
+    sortOrder: Number(row.sort_order),
+    updatedAt: row.updated_at,
+  }));
+}
+
 async function getTaskById(db: D1Database, id: string): Promise<Task | null> {
   const result = await db.prepare(
     `SELECT
@@ -684,6 +992,18 @@ async function getAdRecordById(db: D1Database, id: string): Promise<AdRecord | n
   return result ? mapAdRecord(result) : null;
 }
 
+async function getAgentRequestByIdempotencyKey(db: D1Database, idempotencyKey: string): Promise<AgentRequestRow | null> {
+  const result = await db.prepare(
+    `SELECT id, source, idempotency_key, raw_text, request_body, result_body, status, created_at
+     FROM agent_requests
+     WHERE idempotency_key = ?`
+  )
+    .bind(idempotencyKey)
+    .first<AgentRequestRow>();
+
+  return result ?? null;
+}
+
 async function nextSortOrder(
   db: D1Database,
   table: 'accounts' | 'tasks',
@@ -697,6 +1017,203 @@ async function nextSortOrder(
     .first<{ next_sort_order: number }>();
 
   return Number(result?.next_sort_order ?? 0);
+}
+
+async function listTasks(
+  db: D1Database,
+  filters: Partial<AgentTaskQueryFilters> = {}
+): Promise<Task[]> {
+  const whereClauses: string[] = [];
+  const params: Array<string | number> = [];
+
+  if (filters.accountId) {
+    whereClauses.push('tasks.account_id = ?');
+    params.push(filters.accountId);
+  }
+
+  if (filters.date) {
+    whereClauses.push('tasks.date = ?');
+    params.push(filters.date);
+  }
+
+  if (filters.status) {
+    whereClauses.push('tasks.status = ?');
+    params.push(filters.status);
+  }
+
+  const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  const limitSql = typeof filters.limit === 'number' ? '\n       LIMIT ?' : '';
+
+  const result = await db
+    .prepare(
+      `SELECT
+          tasks.id,
+          tasks.account_id,
+          tasks.title,
+          tasks.date,
+          tasks.location,
+          tasks.status,
+          tasks.sort_order,
+          task_reviews.hit_status,
+          task_reviews.review_data,
+          tasks.created_at,
+          tasks.updated_at
+       FROM tasks
+       LEFT JOIN task_reviews ON task_reviews.task_id = tasks.id
+       ${whereSql}
+       ORDER BY tasks.date DESC,
+                CASE tasks.status WHEN '待拍' THEN 0 WHEN '已拍' THEN 1 ELSE 2 END,
+                tasks.sort_order ASC,
+                tasks.created_at DESC${limitSql}`
+    )
+    .bind(...(typeof filters.limit === 'number' ? [...params, filters.limit] : params))
+    .all<TaskRow>();
+
+  return result.results.map(mapTask);
+}
+
+async function createTaskRecord(db: D1Database, input: TaskInput): Promise<Task> {
+  const id = createId('task');
+  const now = nowIso();
+  const location = input.location?.trim() || '未指定';
+  const sortOrder =
+    input.sortOrder ??
+    (await nextSortOrder(db, 'tasks', `WHERE account_id = ? AND status = ?`, [input.accountId, input.status]));
+
+  await db
+    .prepare(
+      `INSERT INTO tasks (id, account_id, title, date, location, status, sort_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(id, input.accountId, input.title, input.date, location, input.status, sortOrder, now, now)
+    .run();
+
+  return {
+    id,
+    accountId: input.accountId,
+    title: input.title,
+    date: input.date,
+    location,
+    status: input.status,
+    sortOrder,
+    hitStatus: null,
+    reviewData: '',
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function findMissingTaskAccountIssues(
+  db: D1Database,
+  tasks: AgentTaskBatchInput['tasks']
+): Promise<Array<{ path: string; message: string }>> {
+  const presenceByAccountId = new Map<string, boolean>();
+  const issues: Array<{ path: string; message: string }> = [];
+
+  for (const [index, task] of tasks.entries()) {
+    if (!presenceByAccountId.has(task.accountId)) {
+      presenceByAccountId.set(task.accountId, Boolean(await getAccountById(db, task.accountId)));
+    }
+
+    if (!presenceByAccountId.get(task.accountId)) {
+      issues.push({
+        path: `tasks.${index}.accountId`,
+        message: 'Account not found',
+      });
+    }
+  }
+
+  return issues;
+}
+
+async function reserveAgentRequest(
+  db: D1Database,
+  input: {
+    id: string;
+    source: string;
+    idempotencyKey: string;
+    rawText: string | null;
+    requestBody: string;
+  }
+): Promise<
+  | {
+      status: 'created';
+      row: AgentRequestRow;
+    }
+  | {
+      status: 'existing';
+      row: AgentRequestRow;
+    }
+> {
+  const createdAt = nowIso();
+
+  try {
+    await db
+      .prepare(
+        `INSERT INTO agent_requests (id, source, idempotency_key, raw_text, request_body, result_body, status, created_at)
+         VALUES (?, ?, ?, ?, ?, NULL, 'processing', ?)`
+      )
+      .bind(input.id, input.source, input.idempotencyKey, input.rawText, input.requestBody, createdAt)
+      .run();
+
+    return {
+      status: 'created',
+      row: {
+        id: input.id,
+        source: input.source,
+        idempotency_key: input.idempotencyKey,
+        raw_text: input.rawText,
+        request_body: input.requestBody,
+        result_body: null,
+        status: 'processing',
+        created_at: createdAt,
+      },
+    };
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      const existing = await getAgentRequestByIdempotencyKey(db, input.idempotencyKey);
+      if (existing) {
+        return {
+          status: 'existing',
+          row: existing,
+        };
+      }
+    }
+
+    throw error;
+  }
+}
+
+async function finalizeAgentRequest(
+  db: D1Database,
+  requestId: string,
+  status: 'succeeded' | 'failed',
+  result: unknown
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE agent_requests
+       SET status = ?, result_body = ?
+       WHERE id = ?`
+    )
+    .bind(status, JSON.stringify(result), requestId)
+    .run();
+}
+
+function replayAgentRequest(c: Context<AppContext>, row: AgentRequestRow) {
+  if (row.status === 'succeeded' && row.result_body) {
+    try {
+      return c.json(JSON.parse(row.result_body) as AgentTaskBatchResponse, 200);
+    } catch {
+      return c.json({ error: 'Stored agent response is invalid', requestId: row.id }, 500);
+    }
+  }
+
+  if (row.status === 'failed') {
+    return c.json({ error: 'Idempotency key has already been used for a failed request', requestId: row.id }, 409);
+  }
+
+  return c.json({ error: 'Agent request is already processing', requestId: row.id }, 409);
 }
 
 async function attachAsset(
@@ -789,6 +1306,35 @@ function mapAsset(row: AssetRow): Asset {
     ownerEntityId: row.owner_entity_id,
     createdAt: row.created_at,
   };
+}
+
+function normalizeAccountName(value: string): string {
+  return value
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, '')
+    .toLowerCase()
+    .replace(/(账号|账户|帐户|帳號)$/u, '');
+}
+
+function getDateInTimeZone(timeZone: string): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+
+  if (!year || !month || !day) {
+    throw new Error(`Unable to resolve date for timezone: ${timeZone}`);
+  }
+
+  return `${year}-${month}-${day}`;
 }
 
 function createId(prefix: string): string {
@@ -894,4 +1440,8 @@ function delay(ms: number): Promise<void> {
 
 function hasR2SigningEnv(env: AppBindings): boolean {
   return Boolean(env.R2_ACCOUNT_ID && env.R2_BUCKET_NAME && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY);
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Error && /UNIQUE|unique constraint/i.test(error.message);
 }

@@ -10,6 +10,8 @@
 - 归档页 `Archive`：按日期查看、搜索、创建/编辑/删除任务、归档显示设置
 - 投放页 `Ads`：账号切换、收入/投放记录创建、编辑、删除、结算切换、月份切换、收入状态筛选
 - 上传链路：浏览器 -> Worker `sign` -> R2 `PUT` -> Worker `complete` -> D1 落库 -> 资产域名可读
+- Agent API：账号解析、Bearer 鉴权、批量建任务、幂等重放、页面自动同步
+- Agent API：账号列表、任务查询和今日任务视图
 - 页面操作提示：各页首次展示可关闭的使用指引，并记住关闭状态
 - 投放页顶部主卡直接使用当前账号截图作为背景
 - 首页账号卡使用内嵌预览结构，避免封面在列表里显得过度放大
@@ -26,6 +28,7 @@
   - 可执行回归：`@playwright/test`
 - Playwright 默认设备：Chromium 下的 `iPhone 12 Pro` 模拟
 - E2E 默认把移动端布局和触控交互当作主回归面，而不是桌面视口
+- agent API 的自动化请求默认使用 localhost 专用 token `dev-agent-token`
 
 ### 2.4 当前自动化入口
 
@@ -68,6 +71,10 @@
 - 三个页面的操作提示卡关闭后会持久化，并可通过触发按钮重新打开
 - 投放页收入记录新增、编辑、删除、结算切换、筛选切换、月份切换可用
 - Worker API 健康检查可用
+- `GET /api/agent/accounts/resolve` 的 `exact / not_found / ambiguous` 可用
+- `GET /api/agent/accounts`、`GET /api/agent/tasks`、`GET /api/agent/tasks/today` 可用
+- `POST /api/agent/tasks/batch` 的 Bearer 鉴权、结构化校验、幂等重放可用
+- agent 新建任务后，网页端可通过 `focus` 自动同步到新数据
 
 ### 3.2 必须做在线烟测
 
@@ -137,6 +144,21 @@
 - `complete` 返回资产元数据
 - 资产域名返回 `200` 且 `content-type` 正确
 
+### 4.5 Agent API
+
+- 缺少 token 返回 `401`
+- 错误 token 返回 `403`
+- `resolve` 精确命中返回唯一账号
+- `resolve` 未命中返回 `not_found`
+- `resolve` 多命中返回 `ambiguous`
+- `accounts` 可返回可解析账号列表
+- `tasks` 支持 `accountId / date / status / limit` 查询
+- `tasks/today` 支持基于 `Asia/Shanghai` 的今日任务查询
+- `tasks/batch` 一次可创建多条任务
+- 同一个 `Idempotency-Key` 重放不会重复创建任务
+- 非法请求体返回 `422`
+- 页面无需整页刷新，仅通过 `focus` 即可看到 agent 新建任务
+
 ## 5. 通过标准
 
 - 自动化用例全绿
@@ -156,6 +178,7 @@
 
 当前已经落地的自动化用例：
 
+- [tests/e2e/agent-api.spec.ts](/Users/xiaohao-mini/Code/my-ai-web/tests/e2e/agent-api.spec.ts)
 - [tests/e2e/home.spec.ts](/Users/xiaohao-mini/Code/my-ai-web/tests/e2e/home.spec.ts)
 - [tests/e2e/archive.spec.ts](/Users/xiaohao-mini/Code/my-ai-web/tests/e2e/archive.spec.ts)
 - [tests/e2e/ads.spec.ts](/Users/xiaohao-mini/Code/my-ai-web/tests/e2e/ads.spec.ts)
@@ -172,6 +195,7 @@
 - Worker 对 R2 上传完成校验的双路径兜底
 - `Ads` 页新增了记录编辑、删除和结算状态快速切换路径
 - `AccountOverviewSheet` 的账号切换改成草稿态到提交态，降低自动化与实际交互的竞态
+- 本地 agent API 允许 localhost 专用 token，避免 E2E 依赖真实公网 secret
 
 ## 8. 本轮修复的问题
 
@@ -183,16 +207,17 @@
 
 ## 9. 最近一次执行结果
 
-- 执行日期：`2026-03-12`
+- 执行日期：`2026-03-13`
 - 执行命令：`npm run e2e`
-- 结果：`8 passed`
-- 总耗时：约 `21.0s`
+- 结果：`14 passed`
+- 总耗时：约 `27.5s`
 
 覆盖通过的业务流：
 
 - `Home` 账号切换、上方账号 tab / 下方账号卡轮播同步、账号新增、编辑、任务创建、编辑、显式排序模式、状态流转、复盘保存
 - `Archive` 搜索、任务创建、编辑、删除、显式排序模式、显示设置持久化
 - `Ads` 收入记录、投放记录、结算切换、编辑、删除、筛选、月份切换
+- `Agent API` 鉴权、账号列表、账号解析、任务查询、今日任务视图、批量创建、幂等重放、页面自动同步
 - `Guides` 三个页面的操作提示卡关闭持久化与重新打开
 - `Upload` 实时封面预览、封面位置确认、Worker 签名、R2 PUT、Worker complete、资产 URL 可读
 

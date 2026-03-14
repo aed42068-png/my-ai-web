@@ -103,3 +103,80 @@ export interface AdRecordInput {
 }
 
 export interface AdRecordPatch extends Partial<AdRecordInput> {}
+
+export interface AgentResolvedAccount {
+  id: string;
+  name: string;
+}
+
+export interface AgentAccountSummary extends AgentResolvedAccount {
+  sortOrder: number;
+  updatedAt: string;
+}
+
+export interface AgentAccountListResponse {
+  accounts: AgentAccountSummary[];
+}
+
+export type AgentAccountResolveResponse =
+  | {
+      match: 'exact';
+      account: AgentResolvedAccount;
+    }
+  | {
+      match: 'not_found';
+      candidates: AgentResolvedAccount[];
+    }
+  | {
+      match: 'ambiguous';
+      candidates: AgentResolvedAccount[];
+    };
+
+export interface AgentTaskBatchItemInput {
+  accountId: string;
+  title: string;
+  date: string;
+  status: TaskStatus;
+  location?: string;
+}
+
+export interface AgentTaskBatchInput {
+  source: string;
+  timezone?: string;
+  rawText?: string;
+  tasks: AgentTaskBatchItemInput[];
+}
+
+export interface AgentTaskBatchSkippedItem {
+  index: number;
+  reason: string;
+}
+
+export interface AgentTaskBatchResponse {
+  requestId: string;
+  created: Task[];
+  skipped: AgentTaskBatchSkippedItem[];
+}
+
+export interface AgentTaskQueryFilters {
+  accountId: string | null;
+  date: string | null;
+  status: TaskStatus | null;
+  limit: number;
+}
+
+export interface AgentTaskListResponse {
+  tasks: Task[];
+  filters: AgentTaskQueryFilters;
+}
+
+export interface AgentTaskTodayResponse {
+  date: string;
+  timezone: string;
+  tasks: Task[];
+  filters: {
+    accountId: string | null;
+    status: TaskStatus | null;
+    limit: number;
+  };
+}

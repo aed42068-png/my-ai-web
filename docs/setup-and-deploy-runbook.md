@@ -136,6 +136,7 @@ cp .dev.vars.example .dev.vars
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_PUBLIC_BASE_URL`：当前为 `https://assets-tian.midao.site`
+- `AGENT_API_TOKEN`：对外 agent API 的 Bearer token
 
 ### 5.3 应用本地 D1 migration
 
@@ -156,15 +157,21 @@ npm run dev
 ```bash
 npx wrangler secret put R2_ACCESS_KEY_ID
 npx wrangler secret put R2_SECRET_ACCESS_KEY
+npx wrangler secret put AGENT_API_TOKEN
 ```
 
-当前线上 Worker 已经补上并验证通过这两个 secret 绑定，图片上传链路可以正常使用。
+当前线上 Worker 已经补上并验证通过 `R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY` 这两个上传相关 secret 绑定，图片上传链路可以正常使用。
 这里有一个容易踩坑的点：
 
 - secret 名必须精确叫做 `R2_ACCESS_KEY_ID`
 - secret 名必须精确叫做 `R2_SECRET_ACCESS_KEY`
 
 如果你在 Dashboard 里创建了别的 secret 名称，Worker 运行时仍然读不到，`/api/uploads/sign` 会直接返回 `R2 signing environment is incomplete`。
+
+agent API 也一样：
+
+- secret 名必须精确叫做 `AGENT_API_TOKEN`
+- 这个 secret 只用于公网 agent 调用，不要把它暴露给前端页面
 
 ### 6.2 检查 `wrangler.jsonc`
 
@@ -207,6 +214,12 @@ npm run deploy
 npx wrangler d1 migrations apply my-ai-web --remote
 ```
 
+当前如果要启用 agent API，别漏掉：
+
+- [migrations/0002_agent_requests.sql](/Users/xiaohao-mini/Code/my-ai-web/migrations/0002_agent_requests.sql)
+
+否则 `/api/agent/tasks/batch` 无法写入幂等与审计记录。
+
 ## 8. 发布后验证
 
 ### 8.1 基础验证
@@ -221,6 +234,10 @@ npx wrangler d1 migrations apply my-ai-web --remote
 
 - 能拉到账号列表
 - 能创建任务
+- `GET /api/agent/accounts` 能返回当前可解析账号列表
+- `GET /api/agent/accounts/resolve` 能正常返回 `exact / not_found / ambiguous`
+- `GET /api/agent/tasks` 和 `GET /api/agent/tasks/today` 能按条件返回任务
+- `POST /api/agent/tasks/batch` 在带 Bearer token 和 `Idempotency-Key` 时可正常创建任务
 - 能保存任务复盘
 - 能新增、编辑、删除收入或投放记录
 - 能切换收入结算状态
@@ -247,6 +264,7 @@ npx wrangler d1 migrations apply my-ai-web --remote
 2. 归档页日期切换、排序模式进入/退出
 3. 投放页收入/投放切换、记录编辑弹窗、月份弹窗
 4. `GET /api/health`
+5. 如需验证 agent API，优先在本地或 staging 做真实写入，再决定是否在线上跑带写操作的 smoke
 
 说明：
 

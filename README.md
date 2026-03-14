@@ -13,6 +13,9 @@ Cloudflare 全栈版内容管理应用：
 - [docs/README.md](/Users/xiaohao-mini/Code/my-ai-web/docs/README.md)
 - [docs/current-product-status.md](/Users/xiaohao-mini/Code/my-ai-web/docs/current-product-status.md)
 - [docs/cloudflare-architecture.md](/Users/xiaohao-mini/Code/my-ai-web/docs/cloudflare-architecture.md)
+- [docs/agent-api.md](/Users/xiaohao-mini/Code/my-ai-web/docs/agent-api.md)
+- [docs/agent-skill-sync-workflow.md](/Users/xiaohao-mini/Code/my-ai-web/docs/agent-skill-sync-workflow.md)
+- [docs/openclaw-remote-skill-setup.md](/Users/xiaohao-mini/Code/my-ai-web/docs/openclaw-remote-skill-setup.md)
 - [docs/wrangler-cli-guide.md](/Users/xiaohao-mini/Code/my-ai-web/docs/wrangler-cli-guide.md)
 - [docs/setup-and-deploy-runbook.md](/Users/xiaohao-mini/Code/my-ai-web/docs/setup-and-deploy-runbook.md)
 - [AGENTS.md](/Users/xiaohao-mini/Code/my-ai-web/AGENTS.md)
@@ -39,6 +42,7 @@ cp .dev.vars.example .dev.vars
 - `R2_ACCOUNT_ID`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
+- `AGENT_API_TOKEN`
 
 4. 应用本地 migrations
 
@@ -51,6 +55,14 @@ npm run db:migrate:local
 ```bash
 npm run dev
 ```
+
+## OpenClaw / Skill
+
+仓库内已经包含一份 workspace skill：
+
+- [skills/mam-task/SKILL.md](/Users/xiaohao-mini/Code/my-ai-web/skills/mam-task/SKILL.md)
+
+它现在不仅能写任务，也能查询账号/任务，并在写入前自动做重复检查。详细配置见 [docs/agent-api.md](/Users/xiaohao-mini/Code/my-ai-web/docs/agent-api.md)。
 
 ## R2 CORS
 
@@ -70,6 +82,11 @@ npm run dev
 - `POST /api/ad-records`
 - `PATCH /api/ad-records/:id`
 - `DELETE /api/ad-records/:id`
+- `GET /api/agent/accounts`
+- `GET /api/agent/accounts/resolve`
+- `GET /api/agent/tasks`
+- `GET /api/agent/tasks/today`
+- `POST /api/agent/tasks/batch`
 - `POST /api/uploads/sign`
 - `POST /api/uploads/complete`
 - `GET /api/assets/*`
@@ -81,6 +98,7 @@ npm run dev
 ```bash
 wrangler secret put R2_ACCESS_KEY_ID
 wrangler secret put R2_SECRET_ACCESS_KEY
+wrangler secret put AGENT_API_TOKEN
 ```
 
 2. 部署 Worker 与静态资源
@@ -93,4 +111,5 @@ npm run deploy
 
 - [worker/index.ts](/Users/xiaohao-mini/Code/my-ai-web/worker/index.ts)：Hono API 与 R2 直传签名逻辑
 - [migrations/0001_init.sql](/Users/xiaohao-mini/Code/my-ai-web/migrations/0001_init.sql)：D1 schema 与初始数据
+- [migrations/0002_agent_requests.sql](/Users/xiaohao-mini/Code/my-ai-web/migrations/0002_agent_requests.sql)：agent API 幂等与审计表
 - [wrangler.jsonc](/Users/xiaohao-mini/Code/my-ai-web/wrangler.jsonc)：Workers Static Assets、D1、R2 绑定配置

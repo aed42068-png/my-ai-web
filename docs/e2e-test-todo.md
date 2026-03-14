@@ -70,14 +70,29 @@
 - [x] `Ads` 指引卡关闭后持久化
 - [x] 关闭后的“查看操作提示”可重新打开
 
-## 9. 当前剩余建议
+## 9. Agent API 用例
+
+- [x] 缺少 token 返回 `401`
+- [x] 错误 token 返回 `403`
+- [x] `accounts` 列表查询
+- [x] `resolve` 精确命中
+- [x] `resolve` 未命中
+- [x] `resolve` 多命中
+- [x] `tasks` 过滤查询
+- [x] `tasks/today` 今日视图
+- [x] `tasks/batch` 批量创建
+- [x] `Idempotency-Key` 重放不重复写入
+- [x] 非法请求体返回 `422`
+- [x] 页面通过 `focus` 自动同步到 agent 新建任务
+
+## 10. 当前剩余建议
 
 - [ ] 为 `Home` 补一个显式的任务删除 E2E，用于覆盖非归档页删除路径
 - [ ] 为 `Archive` 补一个日期切换断言，覆盖日历维度行为
 - [ ] 增加 `pageerror` / `console` 级别断言，捕获运行时异常
 - [ ] 增加线上 `mam.midao.site` 的 scripted smoke test，和本地回归分开执行
 
-## 10. 已完成但尚未脚本化的线上验证
+## 11. 已完成但尚未脚本化的线上验证
 
 - [x] `2026-03-12` 已手工完成一轮 `mam.midao.site` 非破坏性线上 smoke
 - [x] 首页 `账号一览`、排序模式、归档页日期切换、投放弹窗与月份弹窗都已在线验证
