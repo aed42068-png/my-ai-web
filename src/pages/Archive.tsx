@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ChevronLeft, ChevronRight, Edit3, GripVertical, Palette, Plus, Search, Star, Trash2, X } from 'lucide-react';
 import { Reorder } from 'motion/react';
 import PageGuide from '../components/PageGuide';
+import { formatTaskNote, normalizeTaskNoteInput, persistTaskNote } from '../lib/taskNotes';
 import { SwipeableTask } from '../components/SwipeableTask';
 import type { Account, Task, TaskInput, TaskPatch, TaskStatus } from '../types';
 
@@ -49,7 +50,7 @@ export default function Archive({
   const [taskDraft, setTaskDraft] = useState({
     title: '',
     date: getTodayDate(),
-    location: '未指定',
+    location: '',
     status: '待拍' as TaskStatus,
     accountId: '',
   });
@@ -84,6 +85,7 @@ export default function Archive({
       return tasks.filter(
         (task) =>
           task.title.toLowerCase().includes(lowerQuery) ||
+          task.location.toLowerCase().includes(lowerQuery) ||
           task.reviewData.toLowerCase().includes(lowerQuery) ||
           (accountNameById.get(task.accountId) || '').toLowerCase().includes(lowerQuery)
       );
@@ -117,7 +119,7 @@ export default function Archive({
       setTaskDraft({
         title: task.title,
         date: task.date,
-        location: task.location,
+        location: normalizeTaskNoteInput(task.location),
         status: task.status,
         accountId: task.accountId,
       });
@@ -126,7 +128,7 @@ export default function Archive({
       setTaskDraft({
         title: '',
         date: selectedDateString,
-        location: '未指定',
+        location: '',
         status: '待拍',
         accountId: accounts[0]?.id ?? '',
       });
@@ -150,7 +152,7 @@ export default function Archive({
         await onUpdateTask(editingTask.id, {
           title: taskDraft.title.trim(),
           date: taskDraft.date,
-          location: taskDraft.location.trim() || '未指定',
+          location: persistTaskNote(taskDraft.location),
           status: taskDraft.status,
           accountId: taskDraft.accountId,
         });
@@ -159,7 +161,7 @@ export default function Archive({
         await onCreateTask({
           title: taskDraft.title.trim(),
           date: taskDraft.date,
-          location: taskDraft.location.trim() || '未指定',
+          location: persistTaskNote(taskDraft.location),
           status: taskDraft.status,
           accountId: taskDraft.accountId,
         });
@@ -515,12 +517,13 @@ export default function Archive({
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-slate-700">地点</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">备注</label>
                   <input
                     type="text"
                     data-testid="archive-task-location-input"
                     value={taskDraft.location}
                     onChange={(event) => setTaskDraft((prev) => ({ ...prev, location: event.target.value }))}
+                    placeholder="例如：品牌、脚本、补充说明"
                     className={TASK_FIELD_CLASS}
                   />
                 </div>
@@ -692,7 +695,7 @@ function TaskCard({
         </div>
         <p className="mt-0.5 text-xs text-slate-500">
           {accountName ? <span className="mr-1">{accountName} ·</span> : null}
-          {task.date} · {task.location}
+          {task.date} · {formatTaskNote(task.location)}
         </p>
         {task.reviewData ? (
           <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">有复盘</span>

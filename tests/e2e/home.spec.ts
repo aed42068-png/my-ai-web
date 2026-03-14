@@ -7,7 +7,7 @@ test('home flow: switch account, create account, edit account, create task, comp
   const accountName = uniqueName('E2E账号');
   const updatedAccountName = `${accountName}-已改`;
   const taskName = uniqueName('E2E任务');
-  const updatedLocation = 'E2E 工位';
+  const updatedLocation = 'E2E 备注';
   const reviewText = uniqueName('E2E复盘');
 
   await gotoHome(page);
@@ -27,14 +27,20 @@ test('home flow: switch account, create account, edit account, create task, comp
   await page.getByTestId('account-editor-submit').click();
   await expectToast(page, '账号已更新');
   await expect(page.getByTestId('home-active-account-name')).toHaveText(updatedAccountName);
+  const totalBeforeText = (await page.getByTestId('home-total-task-count').textContent()) || '';
+  const totalBefore = Number(totalBeforeText.match(/\d+/)?.[0] || '0');
 
   await page.getByTestId('home-create-task-todo').click();
   await expect(page.getByTestId('home-task-modal')).toBeVisible();
   await page.getByTestId('home-task-title-input').fill(taskName);
-  await page.getByTestId('home-task-location-input').fill('初始地点');
+  await page.getByTestId('home-task-location-input').fill('初始备注');
   await page.getByTestId('home-task-submit').click();
   await expectToast(page, '任务已创建');
   await expect(page.getByText(taskName)).toBeVisible();
+  await expect(page.getByTestId('home-total-task-count')).toContainText(String(totalBefore + 1));
+  await expect(page.getByTestId('home-total-task-badge')).toContainText(String(totalBefore + 1));
+  await page.getByTestId('home-summary-scope-all').click();
+  await expect(page.getByTestId('home-summary-scope-all')).toHaveAttribute('aria-pressed', 'true');
 
   await page.getByTestId('home-status-chip-todo').click();
   await page
@@ -52,6 +58,8 @@ test('home flow: switch account, create account, edit account, create task, comp
     .filter({ hasText: taskName })
     .getByTestId('home-task-status-progress')
     .click();
+  await page.getByTestId('home-summary-scope-active').click();
+  await expect(page.getByTestId('home-summary-scope-active')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('home-status-chip-shot')).toContainText('1');
 
   await page.getByTestId('home-status-chip-shot').click();
@@ -121,13 +129,13 @@ test('home flow: explicit sort mode reorders tasks for the active account', asyn
 
   await page.getByTestId('home-create-task-todo').click();
   await page.getByTestId('home-task-title-input').fill(firstTaskName);
-  await page.getByTestId('home-task-location-input').fill('排序区');
+  await page.getByTestId('home-task-location-input').fill('排序备注');
   await page.getByTestId('home-task-submit').click();
   await expectToast(page, '任务已创建');
 
   await page.getByTestId('home-create-task-todo').click();
   await page.getByTestId('home-task-title-input').fill(secondTaskName);
-  await page.getByTestId('home-task-location-input').fill('排序区');
+  await page.getByTestId('home-task-location-input').fill('排序备注');
   await page.getByTestId('home-task-submit').click();
   await expectToast(page, '任务已创建');
 

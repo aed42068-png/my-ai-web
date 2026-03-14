@@ -4,7 +4,7 @@ import { expectToast, gotoHome, uniqueName } from './helpers';
 test('archive flow: search, create task, edit task, delete task, persist display settings', async ({ page }) => {
   const taskName = uniqueName('归档任务');
   const editedTaskName = `${taskName}-已改`;
-  const editedLocation = '归档测试地点';
+  const editedLocation = '归档测试备注';
 
   await gotoHome(page);
   await page.getByTestId('tab-archive').click();
@@ -18,7 +18,7 @@ test('archive flow: search, create task, edit task, delete task, persist display
   await page.getByTestId('archive-open-task-modal').click();
   await expect(page.getByTestId('archive-task-modal')).toBeVisible();
   await page.getByTestId('archive-task-title-input').fill(taskName);
-  await page.getByTestId('archive-task-location-input').fill('归档地点');
+  await page.getByTestId('archive-task-location-input').fill('归档备注');
   await page.getByTestId('archive-task-submit').click();
   await expectToast(page, '任务已创建');
 
@@ -63,13 +63,13 @@ test('archive flow: explicit sort mode reorders same-status tasks and persists a
 
   await page.getByTestId('archive-open-task-modal').click();
   await page.getByTestId('archive-task-title-input').fill(firstTaskName);
-  await page.getByTestId('archive-task-location-input').fill('归档排序区');
+  await page.getByTestId('archive-task-location-input').fill('归档排序备注');
   await page.getByTestId('archive-task-submit').click();
   await expectToast(page, '任务已创建');
 
   await page.getByTestId('archive-open-task-modal').click();
   await page.getByTestId('archive-task-title-input').fill(secondTaskName);
-  await page.getByTestId('archive-task-location-input').fill('归档排序区');
+  await page.getByTestId('archive-task-location-input').fill('归档排序备注');
   await page.getByTestId('archive-task-submit').click();
   await expectToast(page, '任务已创建');
 

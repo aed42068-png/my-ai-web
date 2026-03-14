@@ -21,6 +21,7 @@ import { SwipeableTask } from '../components/SwipeableTask';
 import { images } from '../data/mockData';
 import { uploadAsset } from '../lib/api';
 import { getAccountCover, getDefaultAccountImage } from '../lib/defaults';
+import { formatTaskNote, normalizeTaskNoteInput, persistTaskNote } from '../lib/taskNotes';
 import type {
   Account,
   AccountInput,
@@ -51,6 +52,8 @@ interface TaskDraft {
   location: string;
   status: TaskStatus;
 }
+
+type SummaryScope = 'active' | 'all';
 
 const TASK_STATUSES: TaskStatus[] = ['待拍', '已拍', '已发'];
 const STATUS_TEST_IDS: Record<TaskStatus, string> = {
@@ -129,11 +132,12 @@ export default function Home({
   const [taskDraft, setTaskDraft] = useState<TaskDraft>({
     title: '',
     date: getTodayDate(),
-    location: '未指定',
+    location: '',
     status: '待拍',
   });
   const [reviewingTask, setReviewingTask] = useState<Task | null>(null);
   const [selectedStatusView, setSelectedStatusView] = useState<TaskStatus | null>(null);
+  const [summaryScope, setSummaryScope] = useState<SummaryScope>('active');
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isAccountOverviewOpen, setIsAccountOverviewOpen] = useState(false);
@@ -221,6 +225,14 @@ export default function Home({
     () => tasks.filter((task) => task.accountId === activeAccountId),
     [activeAccountId, tasks]
   );
+  const summaryTasks = useMemo(
+    () => (summaryScope === 'all' ? tasks : accountTasks),
+    [accountTasks, summaryScope, tasks]
+  );
+  const accountNameById = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.name] as const)),
+    [accounts]
+  );
 
   const groupedTasks = useMemo(
     () =>
@@ -236,6 +248,25 @@ export default function Home({
         }
       ),
     [accountTasks]
+  );
+  const summaryTaskGroups = useMemo(
+    () =>
+      TASK_STATUSES.reduce<Record<TaskStatus, Task[]>>(
+        (result, status) => ({
+          ...result,
+          [status]: summaryTasks.filter((task) => task.status === status),
+        }),
+        {
+          待拍: [],
+          已拍: [],
+          已发: [],
+        }
+      ),
+    [summaryTasks]
+  );
+  const selectedStatusTasks = useMemo(
+    () => (selectedStatusView ? summaryTaskGroups[selectedStatusView] : []),
+    [selectedStatusView, summaryTaskGroups]
   );
 
   const taskCountByAccountId = useMemo(
@@ -314,7 +345,7 @@ export default function Home({
     setTaskDraft({
       title: '',
       date: getTodayDate(),
-      location: '未指定',
+      location: '',
       status,
     });
     setIsTaskModalOpen(true);
@@ -325,7 +356,7 @@ export default function Home({
     setTaskDraft({
       title: task.title,
       date: task.date,
-      location: task.location,
+      location: normalizeTaskNoteInput(task.location),
       status: task.status,
     });
     setIsTaskModalOpen(true);
@@ -348,7 +379,7 @@ export default function Home({
         await onUpdateTask(editingTask.id, {
           title: taskDraft.title.trim(),
           date: taskDraft.date,
-          location: taskDraft.location.trim() || '未指定',
+          location: persistTaskNote(taskDraft.location),
           status: taskDraft.status,
         });
         showToast('任务已更新');
@@ -357,7 +388,7 @@ export default function Home({
           accountId: activeAccountId,
           title: taskDraft.title.trim(),
           date: taskDraft.date,
-          location: taskDraft.location.trim() || '未指定',
+          location: persistTaskNote(taskDraft.location),
           status: taskDraft.status,
         });
         showToast('任务已创建');
@@ -546,11 +577,45 @@ export default function Home({
 
         <section className="px-5 pt-4">
           <div className="rounded-[28px] bg-white p-4 shadow-sm ring-1 ring-slate-100">
-            <div className="mb-4 flex items-center justify-between px-1">
-              <span className="text-xs font-medium text-slate-500">发布概览</span>
-              <span data-testid="home-active-account-name" className="text-xs font-medium text-primary">
-                {activeAccount?.name || '未选择账号'}
-              </span>
+            <div className="mb-4 flex items-start justify-between gap-3 px-1">
+              <div className="min-w-0">
+                <span className="text-xs font-medium text-slate-500">发布概览</span>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span data-testid="home-active-account-name" className="text-xs font-medium text-primary">
+                    {activeAccount?.name || '未选择账号'}
+                  </span>
+                  <span
+                    data-testid="home-total-task-count"
+                    className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500"
+                  >
+                    总任务 {tasks.length}
+                  </span>
+                </div>
+              </div>
+              <div className="flex shrink-0 rounded-full bg-slate-100 p-1">
+                <button
+                  type="button"
+                  data-testid="home-summary-scope-active"
+                  aria-pressed={summaryScope === 'active'}
+                  onClick={() => setSummaryScope('active')}
+                  className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+                    summaryScope === 'active' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  当前账号
+                </button>
+                <button
+                  type="button"
+                  data-testid="home-summary-scope-all"
+                  aria-pressed={summaryScope === 'all'}
+                  onClick={() => setSummaryScope('all')}
+                  className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+                    summaryScope === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  全部账号
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-3">
               {summaryCards.map(({ status, color, label }) => (
@@ -561,8 +626,8 @@ export default function Home({
                   className="rounded-2xl bg-slate-50 p-3 text-left transition-colors hover:bg-slate-100"
                 >
                   <div className={`text-xs font-semibold uppercase tracking-wide ${color}`}>{label}</div>
-                  <div className="mt-2 text-2xl font-bold text-slate-900">{groupedTasks[status].length}</div>
-                  <div className="mt-1 text-xs text-slate-500">当前账号</div>
+                  <div className="mt-2 text-2xl font-bold text-slate-900">{summaryTaskGroups[status].length}</div>
+                  <div className="mt-1 text-xs text-slate-500">{summaryScope === 'all' ? '全部账号' : '当前账号'}</div>
                 </button>
               ))}
             </div>
@@ -729,6 +794,17 @@ export default function Home({
                 <div>
                   <h2 className="text-lg font-bold text-slate-900">任务安排</h2>
                   <p className="mt-1 text-sm text-slate-500">点左侧圆点推进状态；要调整顺序时先进入排序模式。</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span
+                      data-testid="home-total-task-badge"
+                      className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                    >
+                      总任务 {tasks.length}
+                    </span>
+                    <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">
+                      当前账号 {accountTasks.length}
+                    </span>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -801,7 +877,7 @@ export default function Home({
                                       ) : null}
                                     </div>
                                     <p className="mt-0.5 text-xs text-slate-500">
-                                      {task.date} · {task.location}
+                                      {task.date} · {formatTaskNote(task.location)}
                                     </p>
                                   </div>
                                   <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500">
@@ -851,7 +927,7 @@ export default function Home({
                                       ) : null}
                                     </div>
                                     <p className="mt-0.5 text-xs text-slate-500">
-                                      {task.date} · {task.location}
+                                      {task.date} · {formatTaskNote(task.location)}
                                     </p>
                                   </div>
                                   <span className="text-xs font-medium text-slate-400">{meta.countLabel}</span>
@@ -941,13 +1017,13 @@ export default function Home({
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-slate-700">地点</label>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">备注</label>
                   <input
                     type="text"
                     data-testid="home-task-location-input"
                     value={taskDraft.location}
                     onChange={(event) => setTaskDraft((prev) => ({ ...prev, location: event.target.value }))}
-                    placeholder="未指定"
+                    placeholder="例如：品牌、脚本、补充说明"
                     className={TASK_FIELD_CLASS}
                   />
                 </div>
@@ -1060,8 +1136,8 @@ export default function Home({
             </div>
 
             <div className="flex-1 space-y-3 overflow-y-auto p-5">
-              {groupedTasks[selectedStatusView].length ? (
-                groupedTasks[selectedStatusView].map((task) => (
+              {selectedStatusTasks.length ? (
+                selectedStatusTasks.map((task) => (
                   <div
                     key={task.id}
                     data-testid="home-status-task-card"
@@ -1120,8 +1196,13 @@ export default function Home({
                         </div>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                        {summaryScope === 'all' ? (
+                          <span className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-primary">
+                            {accountNameById.get(task.accountId) || '未命名账号'}
+                          </span>
+                        ) : null}
                         <span className="rounded-full bg-white px-2 py-1">{task.date}</span>
-                        <span>{task.location}</span>
+                        <span>{formatTaskNote(task.location)}</span>
                       </div>
                       {task.reviewData ? (
                         <p className="mt-3 rounded-xl bg-white p-3 text-xs text-slate-500">{task.reviewData}</p>

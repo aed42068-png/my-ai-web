@@ -43,7 +43,7 @@ Key runtime model:
 
 ## Current Delivery State
 
-As of `2026-03-13`:
+As of `2026-03-14`:
 
 - production domain is live at `https://mam.midao.site`
 - current product is already API-driven and no longer a front-end-only prototype
@@ -54,6 +54,8 @@ As of `2026-03-13`:
 - agent-facing query/write API is implemented and covered by local E2E
 - a workspace OpenClaw-ready skill now exists at [skills/mam-task/SKILL.md](/Users/xiaohao-mini/Code/my-ai-web/skills/mam-task/SKILL.md)
 - the `mam-task` skill now supports read-before-write task checks and skips exact same-day duplicates before batch creation
+- task forms now use `备注` as the user-facing copy while the stored/API field remains `location`
+- Home summary now supports `当前账号 / 全部账号` scope switching and shows a global task total alongside the current-account count
 
 ## Product Areas
 
@@ -71,6 +73,9 @@ As of `2026-03-13`:
 - the Home account action row must remain mobile-first; keep it in a compact stacked/grid layout instead of forcing title + three actions onto one line
 - dismissible usage guide with localStorage persistence
 - task create/edit/delete
+- task forms use `备注` as the user-facing label while preserving `location` in the API payload
+- summary cards support `当前账号 / 全部账号` scope switching
+- task arrangement shows both current-account count and a global total badge
 - task status advances via dedicated progress dot
 - explicit task sort mode with drag reorder
 - task status flow
@@ -83,6 +88,7 @@ As of `2026-03-13`:
 - search supports explicit submit via Enter or confirm button
 - search
 - task create/edit/delete
+- task forms use `备注` as the user-facing label while preserving `location` in the API payload
 - explicit task sort mode for same-status tasks
 - display settings persisted in `localStorage`
 - archive layout uses a single main scroll region; do not move the full calendar back into a permanently fixed area
